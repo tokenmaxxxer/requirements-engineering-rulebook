@@ -1,9 +1,19 @@
 # Proposal — requirements-engineering methodology enforcement (issue #10)
 
 **Phase 1 only.** Nothing described here has been executed. Phase 2
-(the actual hook/test/agent files) opens only after an account listed in
+(the actual plugin files) opens only after an account listed in
 `docs/specs/approvers.md` approves this PR (contract v3 s19), matching
 the issue-1/issue-2/issue-5 precedent in this repo.
+
+**Revision note**: this proposal was rewritten per the approver's 요구
+정정 comment on issue #10 — enforcement is not one gate/directive
+deepened in place; it is a **plugin set**, one independent plugin per
+adopted methodology, modeled on how core ships `freelunch`/`scout`/
+`warrant`/`terse` as separate plugins in
+`tokenmaxxxer-core/.claude-plugin/marketplace.json` rather than one
+monolithic `core` plugin. §0 below is the mandatory plugin inventory;
+§1–§2 show how phase-1 and phase-2 norms are each a composition of
+those plugins, not separate machinery.
 
 - **Survey-basis pointer**: `docs/issue-10/reports/requirements-engineering/survey.md`
 - **Scout brief**: `docs/issue-10/reports/requirements-engineering/scout-brief.md`
@@ -15,317 +25,276 @@ the issue-1/issue-2/issue-5 precedent in this repo.
 Issue #10: the methodology this role adopted in the prior maturation
 round (issue #1) exists only as documentation — a one-line `PRODUCES`
 string in `directive.sh` and prose in `README.md`'s Doctrine section.
-Sibling rulebooks (`pricing`, `coding`, both in `implementation-rulebook`'s
-family) enforce their own adopted methodologies mechanically via
-`PreToolUse` gates, state tracking where the methodology has a real
-ordering constraint, and gate test suites. This role has none of that.
-This proposal designs (not implements) the four elements the issue asks
-for, at a level concrete enough that phase 2 can build directly from it.
+The approver's follow-up comment rejects deepening this into a single
+gate/directive and requires instead that each adopted methodology become
+its own self-contained plugin (directive/gate/agent/test as needed),
+registered in this repo's `marketplace.json`, each owning exactly one
+methodology — and that the phase-1 (기획서) and phase-2 (산출물) norms
+themselves be expressed as *which plugins combine* to produce them, not
+as prose describing a single enforcement pass. This proposal designs
+(not implements) that plugin set at a level concrete enough that phase 2
+can build directly from it.
 
-## (1) Directive deepening
+## (0) Plugin inventory (mandatory)
 
-`directive.sh`'s `PRODUCES` line stays as the one-line SessionStart
-summary (canon's `core_role_directive` takes four fixed arguments; this
-constraint was already surfaced and accepted in issue-2's proposal). What
-issue #10 actually asks for — stage/criteria/prohibition detail per facet
-— is proposed to live in a new doctrine file,
-**`requirements-engineering/hooks/lib/produces-schema.md`** (new,
-role-owned; not core canon), read by both the gate script (as the
-authoritative "what must be present" checklist a human/agent can also
-read) and `README.md` (which currently duplicates this prose and should
-instead link to it, to avoid the two drifting apart).
+Four new plugins, each living at `<plugin-name>/` alongside the existing
+`requirements-engineering/` role plugin in this repo, each with its own
+`.claude-plugin/plugin.json` and registered as its own entry in
+`.claude-plugin/marketplace.json` (four new entries added to the existing
+`plugins` array — the current single `requirements-engineering` entry
+stays, unchanged, as the role plugin these compose with, exactly the
+shape `tokenmaxxxer-core`'s marketplace.json already uses for
+`core`+`freelunch`+`scout`+`warrant`+`terse`).
 
-Proposed content shape for `produces-schema.md`, per facet:
+| Plugin | Methodology owned | Components (phase 2) | Source |
+|---|---|---|---|
+| `req-id-gate` | Facet A — structured requirements doc: unique `REQ-` ID + explicit verification condition per requirement | `hooks/req-id-gate.sh` (PreToolUse, `Write\|Edit\|MultiEdit`), `hooks/hooks.json`, `tests/req-id-gate-test.sh` | ISO/IEC/IEEE 29148 skeleton + Given/When/Then acceptance-criteria form, per `docs/issue-1/proposals/requirements-engineering.md` (b)(1)/(c) |
+| `traceability-matrix-gate` | Facet B — traceability matrix: fixed columns (ID, Description, Source, Downstream Link), every facet-A ID present as a row | `hooks/traceability-matrix-gate.sh` (PreToolUse, same path scope), `hooks/hooks.json`, `tests/traceability-matrix-gate-test.sh` | RTM convergence across surveyed PM/testing tooling, per (b)(2)/(c) |
+| `ambiguity-resolution-gate` | Facet C — ambiguity list, resolved: heading present, each entry resolved or explicitly escalated, explicit "none found" if empty | `hooks/ambiguity-resolution-gate.sh` (PreToolUse, same path scope), `hooks/hooks.json`, `tests/ambiguity-resolution-gate-test.sh` | RE literature's ambiguity-as-distinct-activity convention, per (b)(3)/(c) |
+| `proposal-discipline-gate` | Phase-1 proposal norm: the 7 required sections (Problem/scope, Survey-basis pointer, Adopted norm, Rejected alternative, Plugin-reflection plan, Verification plan, Status) + citation/"assumption"-labeling discipline | `hooks/proposal-discipline-gate.sh` (PreToolUse, scoped to `docs/issue-*/proposals/*requirements-engineering*.md`), `hooks/hooks.json`, `tests/proposal-discipline-gate-test.sh` | `docs/issue-1/proposals/requirements-engineering.md` (a) |
 
-### Facet A — Structured requirements doc
+Each plugin is self-completing and single-methodology: it may ship its
+own `PreToolUse` gate, its own test file, and — only where the
+methodology has a genuine repeated front-loading procedure (see the
+`req-id-gate` note below) — its own `agents/` file. No plugin checks more
+than the one methodology named in its row; this is the structural
+difference from the rejected prior design, which put all three facets
+plus the phase-1 section check into one `methodology-gate.sh`.
 
-- **Stages**: (1) elicitation input identified (a named upstream
-  hypothesis/artifact this doc traces from) → (2) each requirement
-  drafted with a unique ID → (3) each requirement carries an explicit
-  verification condition.
-- **Judgment criteria**: an ID is unique within the record (no two
-  requirements share `REQ-` numbers); a verification condition is
-  "explicit" if it names an observable outcome (Given/When/Then, or a
-  bare `Verification:` line with a check a test could run against) —
-  a requirement whose only content is a "shall" sentence with no
-  condition fails this facet.
-- **Prohibitions**: no requirement may appear only in prose without an
-  ID; no verification condition may read as a restatement of the
-  requirement itself (circularity is a facet failure, judged by the gate
-  only insofar as string-detectable — genuine circularity beyond that is
-  a human/reviewer judgment call, not machine-enforceable, and the gate
-  must not overclaim it can catch every case).
-- **Executable level**: machine-checkable via presence-of-pattern (see
-  §2) for ID-format and a verification-condition keyword; the
-  "is-it-actually-a-good-condition" judgment is not machine-executable
-  and is left to the phase-2 human/agent, per the same honesty this
-  repo's other gates already practice (e.g. pricing's own docstring:
-  it checks presence, not truth).
+`req-id-gate` is the one plugin proposed to also carry an agent file,
+`agents/requirements-scout.md` — "before drafting a record, name the
+upstream hypothesis, elicit ambiguities, draft requirement IDs before
+prose" — because it is the only facet whose ordering constraint
+(elicitation → ID → verification condition, per (b)(1)) benefits from
+front-loading rather than pure back-stop checking. The other three
+plugins are gate-only; a repeated multi-session hunt cadence (core's
+`warrant-hunter` shape) is not present for their methodologies, per the
+scout brief's "pattern to skip."
 
-### Facet B — Traceability matrix
+## (1) Phase-1 (기획서) norm — as a plugin composition
 
-- **Stages**: (1) matrix table exists → (2) all four core columns present
-  (ID, Description, Source, Downstream Link) → (3) every requirement ID
-  from facet A appears as a row.
-- **Judgment criteria**: "exists" = a markdown table (or explicitly
-  labeled equivalent) is present under a heading matching
-  `traceability matrix` (case-insensitive); row-completeness ("every
-  requirement ID appears") is checked by simple ID-membership, not table
-  parsing correctness beyond that.
-- **Prohibitions**: no row with an empty ID or empty Source cell (per the
-  existing adopted-norm text: "No matrix without unique IDs on both ends
-  of every row").
-- **Executable level**: column-header presence and per-ID row-membership
-  are both machine-checkable at the string level (see §2 pseudocode);
-  full table-cell parsing (verifying no cell is blank) is a stretch goal
-  the gate may implement via a light table-row regex, degrading
-  gracefully (skip the check, do not falsely pass or falsely fail) if the
-  table isn't parseable as strict markdown.
+The phase-1 proposal norm is **`proposal-discipline-gate` alone**,
+composed with core's already-installed `scout` plugin (phase-1 research,
+unchanged, out of this proposal's scope) and this role's own
+`requirements-engineering` role plugin (branch/write-scope/contract
+mechanics, unchanged). No facet gate (`req-id-gate`,
+`traceability-matrix-gate`, `ambiguity-resolution-gate`) fires on a
+proposal path — those are phase-2 content methodologies, not phase-1
+process methodology. This is a deliberate 1-to-1: one plugin, one
+process, matching the "one methodology = one plugin" instruction rather
+than letting `proposal-discipline-gate` absorb any content-facet
+checking.
 
-### Facet C — Ambiguity list, resolved
-
-- **Stages**: (1) an "Ambiguity" section exists (even if empty) →
-  (2) each entry states the ambiguous statement + candidate readings →
-  (3) each entry states a resolution or an explicit escalation.
-- **Judgment criteria**: a record with genuinely zero ambiguities must
-  say so explicitly (an empty section header alone does not count —
-  per the adopted norm, "must say so explicitly, not omit the section");
-  "escalated — unresolved" is an acceptable terminal value for resolution,
-  a blank value is not.
-- **Prohibitions**: no entry may be silently dropped (i.e., a heading
-  present with zero content is a facet failure, not a pass) unless the
-  explicit "no ambiguities found" sentence is present.
-- **Executable level**: presence of the section heading, presence of
-  either an explicit "no ambiguities found"-equivalent sentence or at
-  least one entry carrying a resolution keyword, both machine-checkable.
-
-## (2) Methodology gate — design
-
-New file (phase 2, not created in this PR):
-**`requirements-engineering/hooks/methodology-gate.sh`**, modeled directly
-on `pricing/hooks/methodology-gate.sh` (see scout brief) — same fail-closed
-trap-at-top, same stdin JSON payload, same Write/Edit/MultiEdit
-result-text reconstruction, same path-pattern scoping, same kill switch
-convention. Registered in `requirements-engineering/hooks/hooks.json`
-under a new `PreToolUse` block matched on `Write|Edit|MultiEdit`
-(hooks.json changes are phase-2, not made in this PR).
-
-### Path scope
+**Check logic** (`proposal-discipline-gate.sh`, pseudocode — phase 2
+fills in the exact regex, mirrors the fail-closed/path-scoped/kill-switch
+shape of `pricing/hooks/methodology-gate.sh`):
 
 ```
-PROPOSAL_RE = ^docs/issue-[0-9]+/proposals/.*requirements-engineering.*\.md$
-RECORD_RE   = ^docs/issue-[0-9]+/reports/requirements-engineering\.md$
-```
-(mirrors this role's actual write surfaces per `write_scope: []` +
-report-only convention; any write outside these two patterns is not this
-gate's business — `sys.exit(0)` immediately, same as pricing's gate.)
-
-### Check logic (pseudocode, phase-2 fills in the exact regex)
-
-```
-resolve resulting text of the write (Write=content; Edit/MultiEdit=
-  reconstruct from current file + old/new string substitution, deny if
-  unreconstructable — same as pricing's gate)
-low = text.lower()
-
+scope: ^docs/issue-[0-9]+/proposals/.*requirements-engineering.*\.md$
+resolve resulting text (Write=content; Edit/MultiEdit=reconstruct;
+  deny if unreconstructable)
 missing = []
-
-# Facet A — structured requirements doc
-if not re.search(r'\bREQ-[0-9A-Za-z]+\b', text):
-    missing.append("requirement-id")
-elif no requirement-id line is followed (within N lines) by a
-     verification-condition marker ("given", "when", "then",
-     "verification:", "verification condition"):
-    missing.append("verification-condition")
-
-# Facet B — traceability matrix
-if not has_any("traceability matrix"):
-    missing.append("traceability-matrix-section")
-elif matrix section lacks all four column headers
-     ("id", "description"/"desc", "source", "downstream"):
-    missing.append("traceability-matrix-columns")
-elif any REQ-xxx id from facet A is absent from the matrix section text:
-    missing.append("traceability-matrix-row-for-<id>")
-
-# Facet C — ambiguity list
-if not has_any("ambiguity"):
-    missing.append("ambiguity-section")
-elif not (has_any("no ambiguities found", "none found", "no ambiguities")
-          or has_any("resolution:", "escalated")):
-    missing.append("ambiguity-resolution-or-explicit-none")
-
-if this is a PHASE-1 PROPOSAL path (PROPOSAL_RE matched):
-    # phase-1's own 7-section norm from docs/issue-1/proposals/
-    # requirements-engineering.md (a)
-    for section in ["problem", "survey-basis", "adopted norm",
-                     "rejected alternative", "plugin-reflection",
-                     "verification plan", "status"]:
-        if section-heading-or-equivalent not in low: missing.append(section)
-
-if missing: deny("requirements-engineering methodology write is missing "
-                  "required element(s): " + ", ".join(missing) + " — per "
-                  "docs/issue-1/proposals/requirements-engineering.md, "
-                  "requirements-engineering/hooks/lib/produces-schema.md")
+for section in ["problem", "survey-basis", "adopted norm",
+                 "rejected alternative", "plugin-reflection",
+                 "verification plan", "status"]:
+    if section-heading-or-equivalent not in text.lower(): missing.append(section)
+if missing: deny("proposal missing required section(s): " + ", ".join(missing)
+                  + " — per docs/issue-1/proposals/requirements-engineering.md (a)")
 else: exit 0
 ```
 
-This combined-deny-message shape (one deny listing every missing element,
-not one deny per element) is the scout brief's "pattern to adopt" from
-pricing's gate.
+## (2) Phase-2 (산출물) norm — as a plugin composition
+
+The phase-2 deliverable-record norm is the **conjunction of all three
+facet gates**: `req-id-gate` AND `traceability-matrix-gate` AND
+`ambiguity-resolution-gate`, each independently registered in
+`requirements-engineering/hooks/hooks.json`'s `PreToolUse` block
+(three separate hook entries, same trigger pattern
+`Write|Edit|MultiEdit`, same `RECORD_RE =
+^docs/issue-[0-9]+/reports/requirements-engineering\.md$` path scope),
+composed on top of (never instead of) core's role-agnostic
+`record-fields-gate.sh` (contract §20 structural fields, untouched).
+A write to the record path must pass all three facet gates plus canon's
+existing structural gate to succeed — the record norm is what the three
+plugins jointly enforce, not a fourth combined check.
+
+### `req-id-gate` — check logic (pseudocode)
+
+```
+scope: RECORD_RE (above)
+text = resolve resulting content (same reconstruction rule as above)
+if not re.search(r'\bREQ-[0-9A-Za-z]+\b', text):
+    deny("requirements-doc facet: no REQ-<id> found")
+elif no REQ-<id> line is followed (within N lines) by a verification
+     marker ("given", "when", "then", "verification:",
+     "verification condition"):
+    deny("requirements-doc facet: REQ-<id> present without a nearby "
+         "verification condition")
+else: exit 0
+```
+
+### `traceability-matrix-gate` — check logic (pseudocode)
+
+```
+scope: RECORD_RE
+text = resolve resulting content
+if not has_any("traceability matrix"):
+    deny("traceability-matrix facet: no 'traceability matrix' section")
+elif matrix section lacks all four column headers
+     ("id", "description"/"desc", "source", "downstream"):
+    deny("traceability-matrix facet: missing column(s)")
+elif any REQ-xxx id present in the record text is absent from the
+     matrix section text:
+    deny("traceability-matrix facet: row missing for <id>")
+else: exit 0
+```
+
+### `ambiguity-resolution-gate` — check logic (pseudocode)
+
+```
+scope: RECORD_RE
+text = resolve resulting content
+if not has_any("ambiguity"):
+    deny("ambiguity facet: no 'ambiguity' section")
+elif not (has_any("no ambiguities found", "none found", "no ambiguities")
+          or has_any("resolution:", "escalated")):
+    deny("ambiguity facet: no explicit 'none found' and no resolved/"
+         "escalated entry")
+else: exit 0
+```
+
+Each gate emits its own single-facet deny message (rather than the
+prior design's one combined multi-facet deny) — this is the direct
+consequence of "one plugin per methodology": a denied write is
+attributable to exactly one plugin, and an approver/human reading a
+PreToolUse denial knows which methodology it failed without needing to
+parse a combined list.
 
 ### State tracking — is it needed?
 
-The survey's gap analysis (§4) already flags this as an open question;
-this proposal resolves it: **no cross-file state file is needed.** This
-role's adopted methodology has exactly one genuine ordering constraint —
-"survey → adopted norm with citation → proposal" (from
-`docs/issue-1/proposals/requirements-engineering.md` (a) item 1) — but
-that ordering is entirely *within a single phase-1 proposal document*
-(the same file must contain a Survey-basis pointer section before/
-alongside its Adopted-norm section; there is no second role's record to
-poll, unlike coding-progress-gate's verify→coding cross-role case). A
-single-file presence check (facet + phase-1-section check above) is
-therefore sufficient; adopting `coding-progress-gate`'s cross-file
-`loop_state` polling machinery here would be over-fit, per the scout
-brief's explicit "pattern to skip." If a future issue introduces a real
-cross-record ordering need for this role (e.g., a required upstream
-record must reach a specific `loop_state` before this role may write),
-phase 2 should revisit this decision against that new requirement, not
-build it speculatively now.
+Unchanged conclusion from the prior draft, re-derived per-plugin: no
+plugin needs cross-file state. The one genuine ordering constraint
+("elicitation → ID → verification condition") lives entirely within
+`req-id-gate`'s own check (ID + nearby verification marker in the same
+text), not across plugins or across files — `traceability-matrix-gate`
+and `ambiguity-resolution-gate` each check their own facet independently
+and do not need to know the others ran. Building a shared `loop_state`
+file across the three plugins would introduce exactly the
+cross-plugin coupling the "independent plugin" instruction rejects;
+each plugin firing on the same `PreToolUse` event but resolving content
+independently is sufficient, and matches how core's own
+`freelunch`/`scout`/`warrant`/`terse` plugins fire independently without
+polling each other's state.
 
-## (3) Gate tests — design
+## (3) Gate tests — per plugin
 
-New file (phase 2, not created in this PR):
-**`requirements-engineering/hooks/tests/methodology-gate-test.sh`**,
-modeled directly on `implementation-rulebook/tests/run-gate-tests.sh`'s
-`run()` helper (throwaway git repo per case, synthetic JSON PreToolUse
-payload piped to the gate script as a real subprocess, exit-code
-assertion). Proposed case list (allow + deny per facet, per the
-performance axis "each element has both an allow-path and a deny-path
-case" from the scout brief):
+Each plugin ships its own test file (not one shared
+`methodology-gate-test.sh`), following `implementation-rulebook/tests/
+run-gate-tests.sh`'s `run()` helper (throwaway git repo per case,
+synthetic JSON PreToolUse payload piped to the plugin's own gate script,
+exit-code assertion):
 
-| Case name | Path | Content | Expected |
-|---|---|---|---|
-| `record-complete` | `docs/issue-7/reports/requirements-engineering.md` | all three facets present, well-formed | allow |
-| `record-missing-req-id` | same | no `REQ-` token anywhere | deny (requirement-id) |
-| `record-missing-verification` | same | `REQ-1` present, no verification marker nearby | deny (verification-condition) |
-| `record-missing-matrix-section` | same | no "traceability matrix" heading | deny (traceability-matrix-section) |
-| `record-matrix-missing-column` | same | matrix heading present, missing "Downstream" column | deny (traceability-matrix-columns) |
-| `record-matrix-missing-row` | same | matrix present, `REQ-2` from facet A absent from matrix rows | deny (traceability-matrix-row-for-REQ-2) |
-| `record-missing-ambiguity-section` | same | no "ambiguity" heading | deny (ambiguity-section) |
-| `record-ambiguity-explicit-none` | same | "No ambiguities found." present, no other ambiguity content | allow |
-| `record-ambiguity-heading-only` | same | heading present, zero content, no explicit-none sentence | deny (ambiguity-resolution-or-explicit-none) |
-| `proposal-all-seven-sections` | `docs/issue-9/proposals/requirements-engineering-x.md` | all 7 phase-1 sections present + facet content | allow |
-| `proposal-missing-status-section` | same | 6 of 7 sections, missing Status | deny (status) |
-| `foreign-path` | `docs/issue-7/reports/qa.md` | anything | allow (not this gate's business — mirrors pricing's own `foreign-path`-style case and `record-fields-gate.sh`'s existing test) |
-| `edit-unreconstructable` | `docs/issue-7/reports/requirements-engineering.md` | Edit with `old_string` not present in current file | deny (cannot determine resulting content — fail closed, mirrors pricing gate's identical branch) |
-| `kill-switch-off` | any in-scope path | otherwise-failing content, with `REQUIREMENTS_ENGINEERING_METHODOLOGY_GATE_OFF=1` set | allow (kill switch honored) |
+| Plugin | Test file | Cases (allow + deny) |
+|---|---|---|
+| `req-id-gate` | `tests/req-id-gate-test.sh` | no-REQ-id (deny), REQ-id-no-verification (deny), REQ-id-with-verification (allow), foreign-path (allow), edit-unreconstructable (deny), kill-switch-off (allow) |
+| `traceability-matrix-gate` | `tests/traceability-matrix-gate-test.sh` | no-matrix-section (deny), missing-column (deny), missing-row-for-id (deny), complete-matrix (allow), foreign-path (allow), kill-switch-off (allow) |
+| `ambiguity-resolution-gate` | `tests/ambiguity-resolution-gate-test.sh` | no-ambiguity-section (deny), heading-only-no-resolution (deny), explicit-none-found (allow), resolved-entry-present (allow), foreign-path (allow), kill-switch-off (allow) |
+| `proposal-discipline-gate` | `tests/proposal-discipline-gate-test.sh` | all-seven-sections (allow), missing-status (deny), missing-adopted-norm (deny), foreign-path (allow), kill-switch-off (allow) |
 
-Each case follows `run-gate-tests.sh`'s existing `report()` convention
-(want/got comparison, pass/fail tally, non-zero exit if any case fails) so
-this new file can be dropped into this repo's own future
-`tests/run-gate-tests.sh` (currently nonexistent here; phase 2 must create
-it, following the same harness shape as `implementation-rulebook/tests/
-run-gate-tests.sh`, not vendoring that file itself — this repo's harness
-is new, role-owned code exercising this repo's own gate, structurally
-similar by design pattern only).
+Each plugin's kill switch is its own env var
+(`REQ_ID_GATE_OFF`, `TRACEABILITY_MATRIX_GATE_OFF`,
+`AMBIGUITY_RESOLUTION_GATE_OFF`, `PROPOSAL_DISCIPLINE_GATE_OFF`) —
+independently switchable, not one shared kill switch for all four, again
+matching "independent plugin" rather than a shared enforcement toggle.
+This repo's own `tests/run-gate-tests.sh` harness (phase 2 must create
+it, nonexistent here today) runs all four plugins' test files, following
+the harness shape of `implementation-rulebook/tests/run-gate-tests.sh`
+by pattern only, not by vendoring.
 
 ## (4) Agents / checklists
 
-The phase-1 proposal norm's 7-section requirement (from
-`docs/issue-1/proposals/requirements-engineering.md` (a)) is itself a
-repeated procedure every future proposal-writing session under this role
-must follow. Two options, not resolved here — a genuine open design
-question for the approver, since this role currently has zero files
-under `agents/`:
+Resolved per plugin, not left as a single open Option A/B choice:
 
-- **Option A (checklist only)**: keep it as prose in `README.md` /
-  `produces-schema.md`, now backed by the machine gate in §2 (which
-  already checks section presence for phase-1 proposals) — no new agent
-  file. Lower cost; the gate itself is the enforcement, a human-readable
-  checklist is documentation only.
-- **Option B (agent file)**: add
-  `requirements-engineering/agents/requirements-scout.md` — a short agent
-  persona whose job is exactly "before drafting a phase-2 record, confirm
-  the upstream hypothesis is named, elicit ambiguities, and draft
-  requirement IDs before prose" (i.e., front-loads the facet ordering the
-  gate checks after the fact). Modeled in file shape (not content — no
-  canon vendoring) on how core's `warrant/agents/warrant-hunter.md`
-  convention is referenced by sibling roles per `docs/issue-2/proposals/
-  canon-reference-conversion.md` action item 1.
-
-**Recommendation for phase 2 to confirm, not decided in this PR**: Option
-A is proposed as sufficient, because the gate in §2 already makes the
-7-section/3-facet requirement machine-enforced at write time; an agent
-file's marginal value is front-loading (catching the gap before the
-write attempt) rather than back-stopping (catching it at the write
-attempt), and this role's methodology (per the scout brief's "pattern to
-skip" reasoning) does not have a genuinely multi-session repeated hunt
-cadence the way core's `warrant-hunter` does. Option B remains available
-if the approver judges the front-loading value worth a new agent file.
+- `req-id-gate` ships `agents/requirements-scout.md` (see §0's
+  rationale) — the one methodology with a genuine front-loadable
+  ordering constraint.
+- `traceability-matrix-gate`, `ambiguity-resolution-gate`,
+  `proposal-discipline-gate` ship no agent file — each is a pure
+  back-stop check with no repeated multi-step procedure to front-load
+  (a completeness check, not a hunt), matching the scout brief's
+  "pattern to skip" reasoning for those facets specifically.
 
 ## Canon-reference discipline (unchanged)
 
 None of the above requires copying core canon content:
-- `directive.sh` continues to source `core/hooks/lib/role-directive.sh`
-  by reference only (unchanged from the issue-2 conversion).
-- The new `methodology-gate.sh` is new role-owned logic — structurally
-  patterned after `pricing/hooks/methodology-gate.sh` (a sibling rulebook,
-  not core canon) but containing this role's own facet content; it is not
-  a vendored copy of anything under `core/hooks/`.
-- The new `tests/methodology-gate-test.sh` is new role-owned test code,
-  patterned after `implementation-rulebook/tests/run-gate-tests.sh`'s
-  harness shape, not copied verbatim.
-- Core's existing global gates (`record-fields-gate.sh` et al., firing via
-  core's own install per issue-2/issue-5) are untouched and continue to
-  check only contract §20's role-agnostic fields; this proposal's new gate
-  is additive, checking this role's content-specific facets on top of
-  (never instead of) canon's structural check — same relationship
-  pricing's gate already has to canon's `record-fields-gate.sh`.
+- `requirements-engineering/hooks/directive.sh` continues to source
+  `core/hooks/lib/role-directive.sh` by reference only (unchanged from
+  the issue-2 conversion) and is unaffected — the four new plugins are
+  additive siblings, not a modification of the role plugin.
+- Each new plugin's gate script is new, role-owned logic — structurally
+  patterned after `pricing/hooks/methodology-gate.sh` (a sibling
+  rulebook, not core canon) but containing only its own one facet's
+  content; none is a vendored copy of anything under `core/hooks/` or of
+  `pricing/hooks/methodology-gate.sh` itself.
+- Each new plugin's test file is new, role-owned test code, patterned
+  after `implementation-rulebook/tests/run-gate-tests.sh`'s harness shape,
+  not copied verbatim.
+- Core's existing global gates (`record-fields-gate.sh` et al.) are
+  untouched and continue to check only contract §20's role-agnostic
+  fields; the four new plugins are additive on top of (never instead of)
+  canon's structural check, same relationship pricing's gate already has.
 
 ## Verification plan
 
 Phase 2 must, before landing:
-1. Create `produces-schema.md`, `methodology-gate.sh`,
-   `hooks/tests/methodology-gate-test.sh`, and wire the new `PreToolUse`
-   entry into `hooks.json`.
-2. Run the new test file and confirm every case in the §3 table passes
-   (all-allow and all-deny cases as specified).
-3. Run core's own `stub-check.sh` (referenced, not vendored, per issue-5)
-   against this role's `hooks/` tree to confirm `directive.sh` remains in
-   stub form and no gate-copy drift was introduced.
-4. Record the pass/fail output of both runs in
+1. Create the four plugin directories (`req-id-gate/`,
+   `traceability-matrix-gate/`, `ambiguity-resolution-gate/`,
+   `proposal-discipline-gate/`), each with `.claude-plugin/plugin.json`,
+   `hooks/<name>.sh`, `hooks/hooks.json`, and `tests/<name>-test.sh`.
+2. Add four new entries to `.claude-plugin/marketplace.json`'s `plugins`
+   array (alongside the existing `requirements-engineering` entry),
+   mirroring `tokenmaxxxer-core`'s marketplace.json shape.
+3. Wire `req-id-gate`'s `agents/requirements-scout.md`.
+4. Run each plugin's own test file and confirm every case in the §3
+   table passes (all-allow and all-deny cases as specified).
+5. Run core's own `stub-check.sh` (referenced, not vendored, per issue-5)
+   against `requirements-engineering/hooks/` to confirm `directive.sh`
+   remains in stub form and no gate-copy drift was introduced.
+6. Record the pass/fail output of steps 4–5 in
    `docs/issue-10/reports/requirements-engineering.md` (phase-2 output,
    not written in this PR).
-5. Confirm the Option A/B agent-file decision (§4) was actually made (not
-   left silently unresolved) and recorded.
 
 ## Rejected alternatives
 
+- **One combined `methodology-gate.sh` checking all three content facets
+  plus the phase-1 section norm** — this proposal's own prior draft;
+  rejected per the approver's explicit correction: it merges four
+  distinct methodologies into one gate/directive, which is exactly the
+  "단일 게이트/디렉티브 심화" the approver ruled out. Superseded by §0's
+  four-plugin split.
 - **Vendoring `pricing/hooks/methodology-gate.sh` verbatim and
   parameterizing it** — rejected: the file's method-taxonomy content
-  (PSM/conjoint/CBC keyword lists) is pricing-domain-specific; copying the
-  file and swapping keywords would still constitute copying a sibling
-  rulebook's file wholesale rather than writing role-owned logic, and
-  issue #10's own constraint ("캐논 스크립트는 참조만·복사 금지") extends
-  in spirit to not vendoring a sibling rulebook's role-specific gate
-  either — the shape (fail-closed structure, path scoping, kill switch)
-  is reused as a *pattern*, not as a *file*.
+  (PSM/conjoint/CBC keyword lists) is pricing-domain-specific; the shape
+  (fail-closed structure, path scoping, kill switch) is reused as a
+  *pattern* per plugin, not as a *file*.
 - **A single monolithic content check merged into canon's
   `record-fields-gate.sh`** — rejected per issue-2's own explicit finding:
   canon's gate is role-agnostic by design; folding role-specific facet
   checks into it would require every other role's canon-referencing
-  rulebook to inherit requirements-engineering-specific regexes, which is
-  exactly the coupling issue-2 flagged as out of scope.
-- **Full state-tracking machine (mirroring coding-progress-gate.sh) for
-  this role** — rejected per §2's "State tracking — is it needed?"
-  analysis: no genuine cross-file ordering constraint exists yet for this
-  role; building the heavier machine now would be speculative
-  over-engineering against a requirement this role doesn't currently have.
+  rulebook to inherit requirements-engineering-specific regexes.
+- **A shared cross-plugin `loop_state` file mirroring
+  `coding-progress-gate.sh`** — rejected: no genuine cross-plugin
+  ordering constraint exists (the one real ordering constraint is
+  internal to `req-id-gate`'s own single-file check); a shared state file
+  would couple otherwise-independent plugins, contrary to the "each
+  plugin owns exactly one methodology" instruction.
+- **One shared kill switch for all four plugins** — rejected for the same
+  reason: independent plugins get independent toggles, matching core's
+  own per-plugin (not per-marketplace) enablement model.
 
 ## Status
 
 Proposal only. Awaiting Approve from an account listed in
-`docs/specs/approvers.md` before phase 2 (creating
-`produces-schema.md`, `methodology-gate.sh`, the gate test file, the
-`hooks.json` wiring, and the agents/checklist decision) begins.
+`docs/specs/approvers.md` before phase 2 (creating the four plugin
+directories, their `marketplace.json` entries, gate scripts, test files,
+and `req-id-gate`'s agent file) begins.
