@@ -1,0 +1,7 @@
+{
+  "name": "traceability-matrix-gate",
+  "description": "Enforces Facet B of requirements-engineering: a traceability matrix (ID, Description, Source, Downstream Link) with a row for every REQ-<id> in the record.",
+  "author": {
+    "name": "Jung Jiwon & Lee Jongkwan"
+  }
+}

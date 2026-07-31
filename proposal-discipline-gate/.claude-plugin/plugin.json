@@ -1,0 +1,7 @@
+{
+  "name": "proposal-discipline-gate",
+  "description": "Enforces the requirements-engineering phase-1 proposal-structure norm: every phase-1 (기획서) proposal must contain the 7 required sections (problem/scope, survey-basis, adopted norm, rejected alternative, plugin-reflection, verification plan, status).",
+  "author": {
+    "name": "Jung Jiwon & Lee Jongkwan"
+  }
+}

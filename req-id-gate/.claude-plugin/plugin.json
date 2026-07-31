@@ -1,0 +1,7 @@
+{
+  "name": "req-id-gate",
+  "description": "Facet A gate for the requirements-engineering role: enforces that every requirement in the deliverable record carries a unique REQ-<id> and an explicit nearby verification condition (Given/When/Then or verification:).",
+  "author": {
+    "name": "Jung Jiwon & Lee Jongkwan"
+  }
+}
