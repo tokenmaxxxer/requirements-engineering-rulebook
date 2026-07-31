@@ -32,9 +32,10 @@ claude plugin install requirements-engineering
 - `requirements-engineering/hooks/directive.sh` — stub SessionStart role
   directive: sources `core/hooks/lib/role-directive.sh` and calls
   `core_role_directive` with this role's four values
-- `requirements-engineering/hooks/tests/stub-check.sh` — vendored verbatim
-  from core; drift detector confirming no gate copy has regrown locally and
-  that `directive.sh` stays in stub form
+- `stub-check.sh` — no local copy (core #69 canon); drift detector run
+  by reference from the core install (`core/hooks/tests/stub-check.sh`)
+  against this rulebook's `hooks/` tree, confirming no gate copy has
+  regrown locally and that `directive.sh` stays in stub form
 - `docs/specs/approvers.md` — Approve-authority allowlist (see below)
 
 This role's `record-fields-gate.sh`-era `produces` check (structured
