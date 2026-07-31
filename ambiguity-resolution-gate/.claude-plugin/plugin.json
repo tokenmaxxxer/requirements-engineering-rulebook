@@ -1,0 +1,7 @@
+{
+  "name": "ambiguity-resolution-gate",
+  "description": "Enforces Facet C of requirements-engineering: an ambiguity section must exist in the deliverable record, and either explicitly states none were found or shows every listed ambiguity resolved or escalated.",
+  "author": {
+    "name": "Jung Jiwon & Lee Jongkwan"
+  }
+}

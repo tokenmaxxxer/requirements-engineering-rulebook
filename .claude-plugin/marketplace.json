@@ -8,6 +8,26 @@
       "name": "requirements-engineering",
       "source": "./requirements-engineering",
       "description": "The requirements-engineering role on contract v3 (issue-160 round-4 promotion). Decides: 요구사항이 검증가능·일관·추적 가능하게 명세되었는가."
+    },
+    {
+      "name": "req-id-gate",
+      "source": "./req-id-gate",
+      "description": "Facet gate for requirements-engineering (issue #10): every requirement in the phase-2 record must carry a unique REQ-<id> and a nearby verification condition. Ships agents/requirements-scout.md to front-load elicitation before drafting."
+    },
+    {
+      "name": "traceability-matrix-gate",
+      "source": "./traceability-matrix-gate",
+      "description": "Facet gate for requirements-engineering (issue #10): the phase-2 record's traceability matrix must have the ID/Description/Source/Downstream Link columns and a row for every REQ-<id> in the record."
+    },
+    {
+      "name": "ambiguity-resolution-gate",
+      "source": "./ambiguity-resolution-gate",
+      "description": "Facet gate for requirements-engineering (issue #10): the phase-2 record must carry an ambiguity section that is either explicitly empty or has every entry resolved or escalated."
+    },
+    {
+      "name": "proposal-discipline-gate",
+      "source": "./proposal-discipline-gate",
+      "description": "Phase-1 process gate for requirements-engineering (issue #10): every proposal under docs/issue-*/proposals/*requirements-engineering*.md must carry the 7 required sections per docs/issue-1/proposals/requirements-engineering.md (a)."
     }
   ]
 }

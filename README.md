@@ -40,16 +40,21 @@ claude plugin install requirements-engineering
   against this rulebook's `hooks/` tree, confirming no gate copy has
   regrown locally and that `directive.sh` stays in stub form
 - `docs/specs/approvers.md` — Approve-authority allowlist (see below)
+- `req-id-gate/`, `traceability-matrix-gate/`, `ambiguity-resolution-gate/`,
+  `proposal-discipline-gate/` — four sibling plugins (issue #10), each
+  owning exactly one adopted methodology's mechanical enforcement; see
+  "Mechanical enforcement" below
+- `tests/run-gate-tests.sh` — aggregates all four plugins' own test files
 
 This role's `record-fields-gate.sh`-era `produces` check (structured
 requirements doc / traceability matrix / ambiguity list, as distinct from
-contract §20's role-agnostic structural fields that canon's gate now
-checks) has no home in canon and is not re-implemented as an automated
-gate here — see `docs/issue-2/reports/requirements-engineering.md` for
-that open finding. Per `docs/issue-1/proposals/requirements-engineering.md`
-(d)3, the role-specific content is instead enforced as the documented
-manual-verification checklist below, deferred to a follow-up issue if an
-automated check is ever wanted.
+contract §20's role-agnostic structural fields that canon's gate already
+checks) has no home in canon by design (canon is role-agnostic) — see
+`docs/issue-2/reports/requirements-engineering.md` for that original open
+finding. Per `docs/issue-1/proposals/requirements-engineering.md` (d)3 and
+`docs/issue-10/proposals/requirements-engineering-enforcement.md`, the
+role-specific content is now enforced by the four plugins below rather
+than as a manual checklist.
 
 ## Doctrine
 
@@ -101,25 +106,37 @@ canon's `record-fields-gate.sh`):
    assumption), and who/what resolved it. Zero ambiguities found must be
    stated explicitly, not omitted.
 
-### Manual-verification checklist (phase-2 gate, pending automation)
+### Mechanical enforcement — plugin set (issue #10)
 
-Before a phase-2 record is treated as complete, confirm by inspection:
+Each content/process methodology above is enforced by its own
+self-contained plugin, one methodology per plugin, per
+`docs/issue-10/proposals/requirements-engineering-enforcement.md`. All
+four are additive on top of (never instead of) canon's role-agnostic
+`record-fields-gate.sh`; none checks more than the one facet named:
 
-- [ ] All three role-specific sections present: Structured Requirements /
-      Traceability Matrix / Ambiguity List
-- [ ] Every requirement has a unique ID and a non-empty verification
-      condition
-- [ ] Every traceability-matrix row has a non-empty ID and Source column
-- [ ] Every ambiguity-list entry has a Resolution value (or explicit
-      "escalated — unresolved"), never blank
-- [ ] Canon's `record-fields-gate.sh` role-agnostic fields still pass
-      (unchanged, additive-only relationship to the above)
+| Plugin | Fires on | Checks |
+|---|---|---|
+| `req-id-gate` | `docs/issue-N/reports/requirements-engineering.md` | every `REQ-<id>` has a nearby verification condition (Given/When/Then or `verification:`); ships `agents/requirements-scout.md` to front-load elicitation → ID → verification-condition ordering |
+| `traceability-matrix-gate` | same | a "traceability matrix" section with ID/Description/Source/Downstream Link columns, and a row for every `REQ-<id>` in the record |
+| `ambiguity-resolution-gate` | same | an "ambiguity" section that is either explicitly empty ("none found") or has every entry resolved/escalated |
+| `proposal-discipline-gate` | `docs/issue-N/proposals/*requirements-engineering*.md` | the seven phase-1 proposal sections above are present |
 
-No automated script enforces this checklist yet: adding one (role-owned,
-never a copy of canon content, e.g. a
-`requirements-engineering/hooks/tests/record-content-check.sh`) is left to
-a follow-up issue per the proposal's phase-2 scope decision.
+Each gate is fail-closed, path-scoped to only this role's own write
+surfaces, and independently kill-switched
+(`REQ_ID_GATE_OFF` / `TRACEABILITY_MATRIX_GATE_OFF` /
+`AMBIGUITY_RESOLUTION_GATE_OFF` / `PROPOSAL_DISCIPLINE_GATE_OFF`). Install
+alongside the role plugin:
 
-This is scaffolding, not a finished rulebook: the doctrine above fills in
-the content norms; handoff enforcement and any automated role-specific
-progress gate remain open for a follow-up issue.
+```
+claude plugin install req-id-gate
+claude plugin install traceability-matrix-gate
+claude plugin install ambiguity-resolution-gate
+claude plugin install proposal-discipline-gate
+```
+
+Run every plugin's gate tests: `bash tests/run-gate-tests.sh` (repo root).
+
+This is no longer scaffolding for the phase-1/phase-2 content norms: the
+doctrine above is now machine-checked, not just documented. Handoff
+enforcement beyond the four plugins above remains open for a follow-up
+issue if one is ever raised.
