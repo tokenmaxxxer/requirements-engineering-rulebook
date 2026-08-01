@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-__fc(){ rc=$?; if [ "$rc" != 0 ] && [ "$rc" != 2 ]; then echo "fail-closed: gate aborted (rc=$rc)" >&2; exit 2; fi; }
-trap __fc EXIT
+. "${CLAUDE_PLUGIN_ROOT_CORE:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../core" && pwd -P)}/hooks/lib/gate-lib.sh"
+gate_trap_fail_closed
 # PreToolUse gate (Write|Edit|MultiEdit) — requirements-engineering
 # Facet B: traceability matrix.
 #
@@ -8,26 +8,26 @@ trap __fc EXIT
 # deliverable record, per docs/issue-1/proposals/requirements-engineering.md
 # (b)(2)/(c).
 #
-# Requires a "traceability matrix" section carrying the four fixed columns
-# (ID, Description, Source, Downstream Link) with a row for every REQ-<id>
-# token found anywhere in the record. Fails closed on any internal error,
-# mirroring pricing's methodology-gate.sh pattern.
+# Requires an actual markdown table (header row + separator row) inside the
+# "traceability matrix" section carrying the four fixed columns (ID,
+# Description, Source, Downstream Link) as discrete header cells — not a
+# substring match against the section's prose (structural upgrade, per
+# docs/issue-13/proposals/requirements-engineering-gate-a-plus.md D2) —
+# with a row for every REQ-<id> token found anywhere in the record. Fails
+# closed on any internal error.
 #
-# Kill switch: export TRACEABILITY_MATRIX_GATE_OFF=1
+# Kill switch: export TRACEABILITY_MATRIX_GATE_OFF=1 (any other value
+# stays active, per gate-lib.sh's gate_kill_switch_active)
 set -uo pipefail
 
 role="${CLAUDE_ROLE:-requirements-engineering}"
-deny() { echo "${role}: refused — $1" >&2; exit 2; }
 
-case "${TRACEABILITY_MATRIX_GATE_OFF:-}" in
-  ""|0|false|no|off) ;;
-  *) exit 0 ;;
-esac
+gate_kill_switch_active "${TRACEABILITY_MATRIX_GATE_OFF:-}" || { trap - EXIT; exit 0; }
 
-command -v python3 >/dev/null 2>&1 || deny "traceability-matrix-gate.sh requires python3, which is not on PATH; denying rather than guessing."
+command -v python3 >/dev/null 2>&1 || gate_deny "$role" "traceability-matrix-gate.sh requires python3, which is not on PATH; denying rather than guessing."
 
 payload="$(cat 2>/dev/null || true)"
-[ -n "$payload" ] || deny "traceability-matrix-gate: empty tool-use payload on stdin; cannot evaluate the traceability-matrix gate."
+[ -n "$payload" ] || gate_deny "$role" "traceability-matrix-gate: empty tool-use payload on stdin; cannot evaluate the traceability-matrix gate."
 
 _target="$(printf '%s' "$payload" | python3 -c '
 import json,sys
@@ -63,24 +63,25 @@ if [ -z "$root" ]; then
   root="$(git -C "$d" rev-parse --show-toplevel 2>/dev/null || true)"
 fi
 [ -z "$root" ] && root="$(git -C "$(pwd -P)" rev-parse --show-toplevel 2>/dev/null || true)"
-[ -z "$root" ] && deny "no project root could be determined; failing closed (traceability-matrix check cannot run)."
+[ -z "$root" ] && gate_deny "$role" "no project root could be determined; failing closed (traceability-matrix check cannot run)."
 
-TG_PAYLOAD="$payload" TG_ROOT="$root" \
+TG_PAYLOAD="$payload" TG_ROOT="$root" TG_ROLE="$role" \
 python3 <<'PY'
 import sys as _fc_sys  # fail-closed-on-internal-error
 try:
-    import json, os, posixpath, re, sys
+    import importlib.util, json, os, posixpath, re, sys
+
+    role = os.environ.get("TG_ROLE", "requirements-engineering")
 
     def deny(m):
-        sys.stderr.write("requirements-engineering: refused — %s\n" % m); sys.exit(2)
+        sys.stderr.write("%s: refused — %s\n" % (role, m)); sys.exit(2)
+
+    _spec = importlib.util.spec_from_file_location("gate_lib", os.environ["GATE_LIB_PY"])
+    gate_lib = importlib.util.module_from_spec(_spec)
+    _spec.loader.exec_module(gate_lib)
 
     raw = os.environ.get("TG_PAYLOAD", "")
-    try:
-        ev = json.loads(raw) if raw else {}
-    except ValueError:
-        deny("the tool-call payload is not valid JSON; the gate cannot judge the traceability matrix on an unparseable write.")
-    if not isinstance(ev, dict):
-        deny("the tool-call payload is not a JSON object; failing closed on the traceability matrix.")
+    ev = gate_lib.gate_parse_json_or_deny(raw, deny)
 
     tool = ev.get("tool_name")
     ti = ev.get("tool_input")
@@ -90,15 +91,6 @@ try:
     root = posixpath.normpath(os.environ["TG_ROOT"].replace("\\", "/"))
     RECORD_RE = re.compile(r'^docs/issue-[0-9]+/reports/requirements-engineering\.md$')
 
-    def resolve(p):
-        n = p.replace("\\", "/")
-        a = n if posixpath.isabs(n) else posixpath.join(root, n)
-        a = posixpath.normpath(a)
-        try:
-            return posixpath.normpath(os.path.realpath(a).replace("\\", "/"))
-        except OSError:
-            return a
-
     path = None
     if tool in ("Write", "Edit", "MultiEdit"):
         p = ti.get("file_path")
@@ -107,46 +99,24 @@ try:
     if path is None:
         sys.exit(0)
 
-    r = resolve(path)
-    if not r.startswith(root + "/"):
+    rel = gate_lib.gate_normalize_path(root, path)
+    if rel is None:
         sys.exit(0)
-    rel = r[len(root):].lstrip("/")
     if not RECORD_RE.match(rel):
         sys.exit(0)  # not this role's traceability-matrix write surface
 
+    abs_path = posixpath.join(root, rel) if rel else root
+
     current = None
-    if os.path.isfile(r):
+    if os.path.isfile(abs_path):
         try:
-            with open(r, encoding="utf-8-sig") as fh:
+            with open(abs_path, encoding="utf-8-sig") as fh:
                 current = fh.read(1 << 20)
         except OSError:
             deny("%s exists but cannot be read; failing closed on the traceability matrix." % rel)
 
-    new_text = None
-    if tool == "Write":
-        c = ti.get("content")
-        if isinstance(c, str):
-            new_text = c
-    elif tool == "Edit":
-        o, n = ti.get("old_string"), ti.get("new_string")
-        if isinstance(o, str) and isinstance(n, str) and current is not None and o in current:
-            new_text = current.replace(o, n, 1)
-    elif tool == "MultiEdit":
-        edits = ti.get("edits")
-        text = current
-        if isinstance(edits, list) and text is not None:
-            ok = True
-            for e in edits:
-                if not isinstance(e, dict):
-                    ok = False; break
-                o, n = e.get("old_string"), e.get("new_string")
-                if not isinstance(o, str) or not isinstance(n, str) or o not in text:
-                    ok = False; break
-                text = text.replace(o, n, 1)
-            if ok:
-                new_text = text
-
-    if new_text is None:
+    new_text, ok = gate_lib.gate_reconstruct_write(tool, ti, current)
+    if not ok:
         deny(
             "this write targets %s but the gate cannot determine the resulting content "
             "from the tool input (tool=%r). Write the full document with Write, or use an "
@@ -171,16 +141,12 @@ try:
     headings = list(heading_re.finditer(new_text))
 
     start_idx = low.index("traceability matrix")
-    # Find the heading line that contains (or precedes and covers) this occurrence.
     matrix_heading = None
     for m in headings:
         if m.start() <= start_idx <= m.end():
             matrix_heading = m
             break
     if matrix_heading is None:
-        # "traceability matrix" occurs outside any heading line — fall back
-        # to treating the nearest preceding heading (if any) as the section
-        # start, else the occurrence itself.
         preceding = [m for m in headings if m.end() <= start_idx]
         matrix_heading = preceding[-1] if preceding else None
 
@@ -194,21 +160,50 @@ try:
                 break
         section_text = new_text[section_start:section_end]
     else:
-        # No heading structure at all — treat the whole document as the section.
         section_text = new_text
 
-    section_low = section_text.lower()
+    # Structural upgrade (D2): require an actual markdown table header row
+    # — a "| ... |" line immediately followed by a "| --- | ... |" style
+    # separator line — and check the four required columns against that
+    # row's own cells, not against the section's prose. Closes the
+    # substring hole where e.g. 'id' matched inside 'valid'/'guide'.
+    HEADER_LINE_RE = re.compile(r'^[ \t]*\|.*\|[ \t]*$')
+    SEP_LINE_RE = re.compile(r'^[ \t]*\|(?:[\s:-]+\|)+[ \t]*$')
 
-    has_id = "id" in section_low
-    has_desc = ("description" in section_low) or ("desc" in section_low)
-    has_source = "source" in section_low
-    has_downstream = "downstream" in section_low
+    sec_lines = section_text.splitlines()
+    header_idx = None
+    for idx in range(len(sec_lines) - 1):
+        if HEADER_LINE_RE.match(sec_lines[idx]) and SEP_LINE_RE.match(sec_lines[idx + 1]):
+            header_idx = idx
+            break
 
-    if not (has_id and has_desc and has_source and has_downstream):
+    if header_idx is None:
         deny(
-            "missing column header(s) — need ID, Description, Source, Downstream Link. "
-            "Per %s, the traceability matrix must be a fixed-column table with all four "
-            "columns present." % CITE
+            "traceability-matrix section has no markdown table (a header row followed "
+            "by a '| --- |'-style separator row). Per %s, the traceability matrix must "
+            "be an actual fixed-column table, not prose mentioning the required column "
+            "names." % CITE
+        )
+
+    header_cells = [c.strip().lower() for c in sec_lines[header_idx].strip().strip('|').split('|')]
+
+    REQUIRED_COLS = (
+        ("ID", ("id",)),
+        ("Description", ("description", "desc")),
+        ("Source", ("source",)),
+        ("Downstream Link", ("downstream",)),
+    )
+
+    def col_present(needles):
+        return any(any(n in cell for n in needles) for cell in header_cells)
+
+    missing_cols = [label for label, needles in REQUIRED_COLS if not col_present(needles)]
+
+    if missing_cols:
+        deny(
+            "traceability-matrix table header is missing column(s): %s. Per %s, the "
+            "table must carry all four columns (ID, Description, Source, Downstream "
+            "Link) as actual header cells." % (", ".join(missing_cols), CITE)
         )
 
     req_re = re.compile(r'\bREQ-[0-9A-Za-z-]+\b')
@@ -229,7 +224,7 @@ except Exception as _fc_e:  # fail-closed-on-internal-error
 PY
 _fc_rc=$?  # fail-closed-on-internal-error
 if [ "$_fc_rc" -ne 0 ] && [ "$_fc_rc" -ne 2 ]; then
-  echo "requirements-engineering: refused — fail-closed: internal error (judge exited $_fc_rc)" >&2
+  echo "${role}: refused — fail-closed: internal error (judge exited $_fc_rc)" >&2
   exit 2
 fi
 exit "$_fc_rc"

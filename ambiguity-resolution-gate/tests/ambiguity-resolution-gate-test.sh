@@ -10,7 +10,7 @@ REC=docs/issue-10/reports/requirements-engineering.md
 
 run() { # want name file content [extra_env]
   want="$1" name="$2" file="$3" content="$4" extra_env="${5:-}"
-  td="$(cd "$(mktemp -d)" && pwd -P)"; git init -q "$td"
+  td="$(cd "$(mktemp -d)" && pwd -P)"; git init -q "$td"; mkdir -p "$td/$(dirname "$file")"
   payload="$(python3 -c '
 import json, sys
 print(json.dumps({"tool_name": "Write", "tool_input": {"file_path": sys.argv[1], "content": sys.argv[2]}, "cwd": sys.argv[3]}))
@@ -20,6 +20,15 @@ print(json.dumps({"tool_name": "Write", "tool_input": {"file_path": sys.argv[1],
   case "$got_rc" in 0) got=allow ;; 2) got=deny ;; *) got="exit-$got_rc" ;; esac
   rm -rf "$td"
   report "$want" "$got" "$name"
+}
+
+run_raw_payload() { # want name payload_json [extra_env]
+  td="$(cd "$(mktemp -d)" && pwd -P)"; git init -q "$td"; mkdir -p "$td/$(dirname "$REC")"
+  got_rc=0
+  printf '%s' "$3" | env CLAUDE_PROJECT_DIR="$td" ${4:-} /bin/bash "$HOOKS/ambiguity-resolution-gate.sh" >/dev/null 2>&1 || got_rc=$?
+  case "$got_rc" in 0) got=allow ;; 2) got=deny ;; *) got="exit-$got_rc" ;; esac
+  rm -rf "$td"
+  report "$1" "$got" "$2"
 }
 
 run deny  no-ambiguity-section         "$REC" '# Requirements
@@ -47,6 +56,54 @@ run allow foreign-path                 "docs/issue-10/reports/other.md" 'no ambi
 run allow kill-switch-off              "$REC" '# Requirements
 
 no ambiguity content whatsoever' "AMBIGUITY_RESOLUTION_GATE_OFF=1"
+
+run deny  kill-switch-unrecognized     "$REC" '# Requirements
+
+no ambiguity content whatsoever' "AMBIGUITY_RESOLUTION_GATE_OFF=xyz"
+
+run_absolute_path() {
+  td="$(cd "$(mktemp -d)" && pwd -P)"; git init -q "$td"; mkdir -p "$td/$(dirname "$REC")"
+  payload="$(python3 -c '
+import json, sys
+print(json.dumps({"tool_name": "Write", "tool_input": {"file_path": sys.argv[1], "content": sys.argv[2]}, "cwd": sys.argv[3]}))
+' "$td/$REC" 'no ambiguity content whatsoever' "$td")"
+  got_rc=0
+  printf '%s' "$payload" | env CLAUDE_PROJECT_DIR="$td" /bin/bash "$HOOKS/ambiguity-resolution-gate.sh" >/dev/null 2>&1 || got_rc=$?
+  case "$got_rc" in 0) got=allow ;; 2) got=deny ;; *) got="exit-$got_rc" ;; esac
+  rm -rf "$td"
+  report deny "$got" absolute-path
+}
+run_absolute_path
+
+run deny  dot-prefixed-path "./$REC" 'no ambiguity content whatsoever'
+
+run_edit_replace_all() {
+  td="$(cd "$(mktemp -d)" && pwd -P)"; git init -q "$td"; mkdir -p "$td/$(dirname "$REC")"
+  printf 'FILLER FILLER\n' > "$td/$REC"
+  payload='{"tool_name":"Edit","tool_input":{"file_path":"'"$REC"'","old_string":"FILLER","new_string":"placeholder","replace_all":true},"cwd":"'"$td"'"}'
+  got_rc=0
+  printf '%s' "$payload" | env CLAUDE_PROJECT_DIR="$td" /bin/bash "$HOOKS/ambiguity-resolution-gate.sh" >/dev/null 2>&1 || got_rc=$?
+  case "$got_rc" in 0) got=allow ;; 2) got=deny ;; *) got="exit-$got_rc" ;; esac
+  rm -rf "$td"
+  report deny "$got" edit-replace_all-all-occurrences-checked
+}
+run_edit_replace_all
+
+run_multiedit_mixed() {
+  td="$(cd "$(mktemp -d)" && pwd -P)"; git init -q "$td"; mkdir -p "$td/$(dirname "$REC")"
+  printf 'HEADING\nBODY\n' > "$td/$REC"
+  payload='{"tool_name":"MultiEdit","tool_input":{"file_path":"'"$REC"'","edits":[{"old_string":"HEADING","new_string":"placeholder-a","replace_all":true},{"old_string":"placeholder-a\nBODY","new_string":"## Ambiguity\nNo ambiguities found.","replace_all":false}]},"cwd":"'"$td"'"}'
+  got_rc=0
+  printf '%s' "$payload" | env CLAUDE_PROJECT_DIR="$td" /bin/bash "$HOOKS/ambiguity-resolution-gate.sh" >/dev/null 2>&1 || got_rc=$?
+  case "$got_rc" in 0) got=allow ;; 2) got=deny ;; *) got="exit-$got_rc" ;; esac
+  rm -rf "$td"
+  report allow "$got" multiedit-mixed-replace_all
+}
+run_multiedit_mixed
+
+run_raw_payload deny malformed-json-truncated '{"tool_name":"Write","tool_input":{'
+run_raw_payload deny malformed-json-non-object '["not","an","object"]'
+run_raw_payload deny malformed-json-empty ''
 
 printf '\n== %d passed, %d failed ==\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

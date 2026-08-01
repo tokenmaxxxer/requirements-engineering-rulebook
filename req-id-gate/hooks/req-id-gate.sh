@@ -1,34 +1,34 @@
 #!/usr/bin/env bash
-__fc(){ rc=$?; if [ "$rc" != 0 ] && [ "$rc" != 2 ]; then echo "fail-closed: gate aborted (rc=$rc)" >&2; exit 2; fi; }
-trap __fc EXIT
+. "${CLAUDE_PLUGIN_ROOT_CORE:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../core" && pwd -P)}/hooks/lib/gate-lib.sh"
+gate_trap_fail_closed
 # PreToolUse gate (Write|Edit|MultiEdit) — req-id-gate, a single-facet
 # plugin for the requirements-engineering role.
 #
 # Enforces Facet A — structured requirements doc: every requirement in
 # the deliverable record must carry a unique REQ-<id> and an explicit
-# nearby verification condition (Given/When/Then or "verification:"/
-# "verification condition"), per docs/issue-1/proposals/
-# requirements-engineering.md (b)(1)/(c).
+# nearby verification condition (Given/When/Then, each marker starting
+# its own line, or a line-anchored "verification:"/"verification
+# condition" marker), per docs/issue-1/proposals/
+# requirements-engineering.md (b)(1)/(c). Structural (line-anchored,
+# next-blank-line-or-next-REQ-id-bounded) rather than substring-in-window,
+# per docs/issue-13/proposals/requirements-engineering-gate-a-plus.md (D3).
 #
 # Target: docs/issue-<n>/reports/requirements-engineering.md (the
 # role's deliverable record — this role's own write surface per
 # directive.sh; write_scope is report-only for this facet).
 #
-# Kill switch: export REQ_ID_GATE_OFF=1
+# Kill switch: export REQ_ID_GATE_OFF=1 (any other value stays active,
+# per gate-lib.sh's gate_kill_switch_active)
 set -uo pipefail
 
 role="${CLAUDE_ROLE:-requirements-engineering}"
-deny() { echo "${role}: refused — $1" >&2; exit 2; }
 
-case "${REQ_ID_GATE_OFF:-}" in
-  ""|0|false|no|off) ;;
-  *) exit 0 ;;
-esac
+gate_kill_switch_active "${REQ_ID_GATE_OFF:-}" || { trap - EXIT; exit 0; }
 
-command -v python3 >/dev/null 2>&1 || deny "req-id-gate.sh requires python3, which is not on PATH; denying rather than guessing."
+command -v python3 >/dev/null 2>&1 || gate_deny "$role" "req-id-gate.sh requires python3, which is not on PATH; denying rather than guessing."
 
 payload="$(cat 2>/dev/null || true)"
-[ -n "$payload" ] || deny "req-id-gate: empty tool-use payload on stdin; cannot evaluate the requirements-doc facet."
+[ -n "$payload" ] || gate_deny "$role" "req-id-gate: empty tool-use payload on stdin; cannot evaluate the requirements-doc facet."
 
 _target="$(printf '%s' "$payload" | python3 -c '
 import json,sys
@@ -64,26 +64,25 @@ if [ -z "$root" ]; then
   root="$(git -C "$d" rev-parse --show-toplevel 2>/dev/null || true)"
 fi
 [ -z "$root" ] && root="$(git -C "$(pwd -P)" rev-parse --show-toplevel 2>/dev/null || true)"
-[ -z "$root" ] && deny "no project root could be determined; failing closed (requirements-doc facet check cannot run)."
+[ -z "$root" ] && gate_deny "$role" "no project root could be determined; failing closed (requirements-doc facet check cannot run)."
 
 RG_PAYLOAD="$payload" RG_ROOT="$root" RG_ROLE="$role" \
 python3 <<'PY'
 import sys as _fc_sys  # fail-closed-on-internal-error
 try:
-    import json, os, posixpath, re, sys
+    import importlib.util, json, os, posixpath, re, sys
 
     role = os.environ.get("RG_ROLE", "requirements-engineering")
 
     def deny(m):
         sys.stderr.write("%s: refused — %s\n" % (role, m)); sys.exit(2)
 
+    _spec = importlib.util.spec_from_file_location("gate_lib", os.environ["GATE_LIB_PY"])
+    gate_lib = importlib.util.module_from_spec(_spec)
+    _spec.loader.exec_module(gate_lib)
+
     raw = os.environ.get("RG_PAYLOAD", "")
-    try:
-        ev = json.loads(raw) if raw else {}
-    except ValueError:
-        deny("the tool-call payload is not valid JSON; the gate cannot judge the requirements-doc facet on an unparseable write.")
-    if not isinstance(ev, dict):
-        deny("the tool-call payload is not a JSON object; failing closed on the requirements-doc facet.")
+    ev = gate_lib.gate_parse_json_or_deny(raw, deny)
 
     tool = ev.get("tool_name")
     ti = ev.get("tool_input")
@@ -93,15 +92,6 @@ try:
     root = posixpath.normpath(os.environ["RG_ROOT"].replace("\\", "/"))
     RECORD_RE = re.compile(r'^docs/issue-[0-9]+/reports/requirements-engineering\.md$')
 
-    def resolve(p):
-        n = p.replace("\\", "/")
-        a = n if posixpath.isabs(n) else posixpath.join(root, n)
-        a = posixpath.normpath(a)
-        try:
-            return posixpath.normpath(os.path.realpath(a).replace("\\", "/"))
-        except OSError:
-            return a
-
     path = None
     if tool in ("Write", "Edit", "MultiEdit"):
         p = ti.get("file_path")
@@ -110,46 +100,24 @@ try:
     if path is None:
         sys.exit(0)
 
-    r = resolve(path)
-    if not r.startswith(root + "/"):
+    rel = gate_lib.gate_normalize_path(root, path)
+    if rel is None:
         sys.exit(0)
-    rel = r[len(root):].lstrip("/")
     if not RECORD_RE.match(rel):
         sys.exit(0)  # not the deliverable record — not this gate's business
 
+    abs_path = posixpath.join(root, rel) if rel else root
+
     current = None
-    if os.path.isfile(r):
+    if os.path.isfile(abs_path):
         try:
-            with open(r, encoding="utf-8-sig") as fh:
+            with open(abs_path, encoding="utf-8-sig") as fh:
                 current = fh.read(1 << 20)
         except OSError:
             deny("%s exists but cannot be read; failing closed on the requirements-doc facet." % rel)
 
-    new_text = None
-    if tool == "Write":
-        c = ti.get("content")
-        if isinstance(c, str):
-            new_text = c
-    elif tool == "Edit":
-        o, n = ti.get("old_string"), ti.get("new_string")
-        if isinstance(o, str) and isinstance(n, str) and current is not None and o in current:
-            new_text = current.replace(o, n, 1)
-    elif tool == "MultiEdit":
-        edits = ti.get("edits")
-        text = current
-        if isinstance(edits, list) and text is not None:
-            ok = True
-            for e in edits:
-                if not isinstance(e, dict):
-                    ok = False; break
-                o, n = e.get("old_string"), e.get("new_string")
-                if not isinstance(o, str) or not isinstance(n, str) or o not in text:
-                    ok = False; break
-                text = text.replace(o, n, 1)
-            if ok:
-                new_text = text
-
-    if new_text is None:
+    new_text, ok = gate_lib.gate_reconstruct_write(tool, ti, current)
+    if not ok:
         deny(
             "this write targets %s but the gate cannot determine the resulting content "
             "from the tool input (tool=%r). Write the full document with Write, or use an "
@@ -158,7 +126,8 @@ try:
         )
 
     REQ_RE = re.compile(r'\bREQ-[0-9A-Za-z]+(?:-[0-9A-Za-z]+)*\b')
-    VERIFY_MARKERS = ("given", "when", "then", "verification:", "verification condition")
+    GWT_LINE_RE = re.compile(r'^\s*(given|when|then)\b', re.I)
+    VERIFY_LINE_RE = re.compile(r'^\s*verification[: ]', re.I)
     NEARBY_LINES = 8
 
     if not REQ_RE.search(new_text):
@@ -168,23 +137,52 @@ try:
             "requirement must carry a unique REQ-<id>."
         )
 
+    def marker_line(line):
+        return bool(GWT_LINE_RE.match(line) or VERIFY_LINE_RE.match(line))
+
+    # A REQ-<id> is satisfied once ANY of its occurrences in the document
+    # carries a nearby, structurally anchored verification condition — a
+    # later bare re-mention of an already-verified id (e.g. its own row in
+    # the traceability matrix, or a citation elsewhere) does not need to
+    # re-prove it. Per-line-occurrence-only checking would make a
+    # traceability-matrix row (one REQ-<id> per line, by definition with
+    # no room for its own Given/When/Then block) permanently unsatisfiable
+    # once every marker had to be line-anchored (D3) — a real requirement
+    # doc cannot both carry a matrix (facet B) and never re-mention an id.
     lines = new_text.splitlines()
-    unverified_ids = []
+    all_ids_in_order = []
+    seen_order = set()
+    for m in REQ_RE.finditer(new_text):
+        if m.group(0) not in seen_order:
+            seen_order.add(m.group(0))
+            all_ids_in_order.append(m.group(0))
+
+    ever_verified = set()
     for i, line in enumerate(lines):
         ids_on_line = set(REQ_RE.findall(line))
         if not ids_on_line:
             continue
-        window = "\n".join(lines[i:i + 1 + NEARBY_LINES]).lower()
-        if not any(marker in window for marker in VERIFY_MARKERS):
-            for rid in ids_on_line:
-                if rid not in unverified_ids:
-                    unverified_ids.append(rid)
+        verified = marker_line(line)
+        if not verified:
+            for j in range(i + 1, min(i + 1 + NEARBY_LINES, len(lines))):
+                nxt = lines[j]
+                if nxt.strip() == "" or REQ_RE.search(nxt):
+                    break
+                if marker_line(nxt):
+                    verified = True
+                    break
+        if verified:
+            ever_verified.update(ids_on_line)
+
+    unverified_ids = [rid for rid in all_ids_in_order if rid not in ever_verified]
 
     if unverified_ids:
         deny(
-            "requirements-doc facet: REQ-<id> present without a nearby verification "
-            "condition (Given/When/Then or 'verification:'/'verification condition' "
-            "within %d lines): %s. Per docs/issue-1/proposals/requirements-engineering.md "
+            "requirements-doc facet: REQ-<id> present without a nearby, structurally "
+            "anchored verification condition (a line starting with Given/When/Then, or "
+            "'verification:'/'verification condition', within the contiguous block "
+            "following the REQ-id line up to the next blank line or next REQ-id, capped "
+            "at %d lines): %s. Per docs/issue-1/proposals/requirements-engineering.md "
             "(b)(1)/(c), every requirement must carry an explicit nearby verification "
             "condition." % (NEARBY_LINES, ", ".join(unverified_ids))
         )

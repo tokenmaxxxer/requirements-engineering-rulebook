@@ -14,18 +14,24 @@ headed "ambiguity", and that section must either:
 - show every listed ambiguity resolved (`resolution:`) or explicitly
   escalated (`escalated`).
 
-The gate is a `PreToolUse` hook (`hooks/ambiguity-resolution-gate.sh`)
-matching `Write|Edit|MultiEdit`. It reads the resulting content of the write
-(reconstructing Edit/MultiEdit against the file's current content), and
-denies the tool call (exit 2) when the ambiguity facet is missing. It is
-scoped only to `docs/issue-<n>/reports/requirements-engineering.md`; writes
-to any other path are allowed silently. It fails closed on any internal
-error (malformed payload, unreadable file, unparseable JSON, etc.).
+The gate is a `PreToolUse` hook (`hooks/ambiguity-resolution-gate.sh`),
+built on core's `gate-lib.sh`/`gate-lib.py` (core issue #72, referenced
+from the sibling core install, never vendored), matching
+`Write|Edit|MultiEdit`. It reads the resulting content of the write
+(reconstructing Write/Edit/MultiEdit, honoring each edit's own
+`replace_all`, against the file's current content), and denies the tool
+call (exit 2) when the ambiguity facet is missing. It is scoped only to
+`docs/issue-<n>/reports/requirements-engineering.md`; writes to any other
+path are allowed silently. It fails closed on any internal error
+(malformed payload, unreadable file, unparseable JSON, etc.).
 
 ## Kill switch
 
-Set `AMBIGUITY_RESOLUTION_GATE_OFF=1` (or any value other than
-unset/`0`/`false`/`no`/`off`) to bypass the gate entirely.
+Set `AMBIGUITY_RESOLUTION_GATE_OFF=1` (or `true`/`yes`/`on`,
+case-insensitive) to bypass the gate. Any other value — including
+empty/unset, a recognized off-spelling (`0`/`false`/`no`/`off`), or an
+unrecognized typo — leaves the gate active (`gate_kill_switch_active`,
+core issue #72).
 
 ## Tests
 
