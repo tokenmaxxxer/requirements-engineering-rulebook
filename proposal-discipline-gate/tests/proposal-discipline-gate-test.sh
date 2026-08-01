@@ -127,5 +127,33 @@ run_raw_payload deny malformed-json-truncated '{"tool_name":"Write","tool_input"
 run_raw_payload deny malformed-json-non-object '["not","an","object"]'
 run_raw_payload deny malformed-json-empty ''
 
+# D10: a bare Edit (not Write, not MultiEdit) that completes a
+# six-of-seven-section fixture to all seven, asserted allow — closes the
+# gap where every existing allow-path case routed through Write/MultiEdit.
+run_edit_plain_allow() {
+  td="$(cd "$(mktemp -d)" && pwd -P)"; git init -q "$td"; mkdir -p "$td/$(dirname "$PROPOSAL_PATH")"
+  printf '%s' "$MISSING_STATUS" > "$td/$PROPOSAL_PATH"
+  py_old="$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$MISSING_STATUS")"
+  py_new="$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1] + "\n\n## Status\napproved"))' "$MISSING_STATUS")"
+  payload='{"tool_name":"Edit","tool_input":{"file_path":"'"$PROPOSAL_PATH"'","old_string":'"$py_old"',"new_string":'"$py_new"'},"cwd":"'"$td"'"}'
+  printf '%s' "$payload" | env CLAUDE_PROJECT_DIR="$td" /bin/bash "$HOOKS/proposal-discipline-gate.sh" >/dev/null 2>&1
+  rc=$?; case "$rc" in 0) got=allow ;; 2) got=deny ;; *) got="exit-$rc" ;; esac
+  rm -rf "$td"; report allow "$got" edit-plain-completes-all-seven
+}
+run_edit_plain_allow
+
+# missing-core: CLAUDE_PLUGIN_ROOT_CORE pointed at a nonexistent path must
+# deny (exit 2), not silently allow (core issue-75 fix; the || guard on the
+# gate-lib.sh source line must trip here).
+run_missing_core() {
+  td="$(cd "$(mktemp -d)" && pwd -P)"; git init -q "$td"; mkdir -p "$td/$(dirname "$PROPOSAL_PATH")"
+  python3 -c 'import json,sys; print(json.dumps({"tool_name":"Write","tool_input":{"file_path":sys.argv[1],"content":sys.argv[2]},"cwd":sys.argv[3]}))' \
+    "$PROPOSAL_PATH" "$MISSING_STATUS" "$td" > "$td/.payload.json"
+  env CLAUDE_PROJECT_DIR="$td" CLAUDE_PLUGIN_ROOT_CORE="$td/no-such-core" /bin/bash "$HOOKS/proposal-discipline-gate.sh" < "$td/.payload.json" >/dev/null 2>&1
+  rc=$?; case "$rc" in 0) got=allow ;; 2) got=deny ;; *) got="exit-$rc" ;; esac
+  rm -rf "$td"; report deny "$got" missing-core
+}
+run_missing_core
+
 printf '\n== %d passed, %d failed ==\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

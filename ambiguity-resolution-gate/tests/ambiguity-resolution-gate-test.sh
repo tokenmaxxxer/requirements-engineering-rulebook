@@ -105,5 +105,22 @@ run_raw_payload deny malformed-json-truncated '{"tool_name":"Write","tool_input"
 run_raw_payload deny malformed-json-non-object '["not","an","object"]'
 run_raw_payload deny malformed-json-empty ''
 
+# missing-core: CLAUDE_PLUGIN_ROOT_CORE pointed at a nonexistent path must
+# deny (exit 2), not silently allow (core issue-75 fix; the || guard on the
+# gate-lib.sh source line must trip here).
+run_missing_core() {
+  td="$(cd "$(mktemp -d)" && pwd -P)"; git init -q "$td"; mkdir -p "$td/$(dirname "$REC")"
+  payload="$(python3 -c '
+import json, sys
+print(json.dumps({"tool_name": "Write", "tool_input": {"file_path": sys.argv[1], "content": sys.argv[2]}, "cwd": sys.argv[3]}))
+' "$REC" "no ambiguity content here" "$td")"
+  got_rc=0
+  printf '%s' "$payload" | env CLAUDE_PROJECT_DIR="$td" CLAUDE_PLUGIN_ROOT_CORE="$td/no-such-core" /bin/bash "$HOOKS/ambiguity-resolution-gate.sh" >/dev/null 2>&1 || got_rc=$?
+  case "$got_rc" in 0) got=allow ;; 2) got=deny ;; *) got="exit-$got_rc" ;; esac
+  rm -rf "$td"
+  report deny "$got" missing-core
+}
+run_missing_core
+
 printf '\n== %d passed, %d failed ==\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
