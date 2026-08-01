@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-__fc(){ rc=$?; if [ "$rc" != 0 ] && [ "$rc" != 2 ]; then echo "fail-closed: gate aborted (rc=$rc)" >&2; exit 2; fi; }
-trap __fc EXIT
+. "${CLAUDE_PLUGIN_ROOT_CORE:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../core" && pwd -P)}/hooks/lib/gate-lib.sh"
+gate_trap_fail_closed
 # PreToolUse gate (Write|Edit|MultiEdit) — requirements-engineering-role-specific.
 #
 # Enforces Facet C — ambiguity list, resolved — of
@@ -10,21 +10,18 @@ trap __fc EXIT
 # explicitly that none were found, or show every listed ambiguity resolved
 # (or explicitly escalated).
 #
-# Kill switch: export AMBIGUITY_RESOLUTION_GATE_OFF=1
+# Kill switch: export AMBIGUITY_RESOLUTION_GATE_OFF=1 (any other value
+# stays active, per gate-lib.sh's gate_kill_switch_active)
 set -uo pipefail
 
 role="${CLAUDE_ROLE:-requirements-engineering}"
-deny() { echo "${role}: refused — $1" >&2; exit 2; }
 
-case "${AMBIGUITY_RESOLUTION_GATE_OFF:-}" in
-  ""|0|false|no|off) ;;
-  *) exit 0 ;;
-esac
+gate_kill_switch_active "${AMBIGUITY_RESOLUTION_GATE_OFF:-}" || { trap - EXIT; exit 0; }
 
-command -v python3 >/dev/null 2>&1 || deny "ambiguity-resolution-gate.sh requires python3, which is not on PATH; denying rather than guessing."
+command -v python3 >/dev/null 2>&1 || gate_deny "$role" "ambiguity-resolution-gate.sh requires python3, which is not on PATH; denying rather than guessing."
 
 payload="$(cat 2>/dev/null || true)"
-[ -n "$payload" ] || deny "ambiguity-resolution-gate: empty tool-use payload on stdin; cannot evaluate the ambiguity gate."
+[ -n "$payload" ] || gate_deny "$role" "ambiguity-resolution-gate: empty tool-use payload on stdin; cannot evaluate the ambiguity gate."
 
 _target="$(printf '%s' "$payload" | python3 -c '
 import json,sys
@@ -60,24 +57,25 @@ if [ -z "$root" ]; then
   root="$(git -C "$d" rev-parse --show-toplevel 2>/dev/null || true)"
 fi
 [ -z "$root" ] && root="$(git -C "$(pwd -P)" rev-parse --show-toplevel 2>/dev/null || true)"
-[ -z "$root" ] && deny "no project root could be determined; failing closed (ambiguity check cannot run)."
+[ -z "$root" ] && gate_deny "$role" "no project root could be determined; failing closed (ambiguity check cannot run)."
 
-AG_PAYLOAD="$payload" AG_ROOT="$root" \
+AG_PAYLOAD="$payload" AG_ROOT="$root" AG_ROLE="$role" \
 python3 <<'PY'
 import sys as _fc_sys  # fail-closed-on-internal-error
 try:
-    import json, os, posixpath, re, sys
+    import importlib.util, json, os, posixpath, re, sys
+
+    role = os.environ.get("AG_ROLE", "requirements-engineering")
 
     def deny(m):
-        sys.stderr.write("requirements-engineering: refused — %s\n" % m); sys.exit(2)
+        sys.stderr.write("%s: refused — %s\n" % (role, m)); sys.exit(2)
+
+    _spec = importlib.util.spec_from_file_location("gate_lib", os.environ["GATE_LIB_PY"])
+    gate_lib = importlib.util.module_from_spec(_spec)
+    _spec.loader.exec_module(gate_lib)
 
     raw = os.environ.get("AG_PAYLOAD", "")
-    try:
-        ev = json.loads(raw) if raw else {}
-    except ValueError:
-        deny("the tool-call payload is not valid JSON; the gate cannot judge the ambiguity facet on an unparseable write.")
-    if not isinstance(ev, dict):
-        deny("the tool-call payload is not a JSON object; failing closed on the ambiguity facet.")
+    ev = gate_lib.gate_parse_json_or_deny(raw, deny)
 
     tool = ev.get("tool_name")
     ti = ev.get("tool_input")
@@ -87,15 +85,6 @@ try:
     root = posixpath.normpath(os.environ["AG_ROOT"].replace("\\", "/"))
     SCOPE_RE = re.compile(r'^docs/issue-[0-9]+/reports/requirements-engineering\.md$')
 
-    def resolve(p):
-        n = p.replace("\\", "/")
-        a = n if posixpath.isabs(n) else posixpath.join(root, n)
-        a = posixpath.normpath(a)
-        try:
-            return posixpath.normpath(os.path.realpath(a).replace("\\", "/"))
-        except OSError:
-            return a
-
     path = None
     if tool in ("Write", "Edit", "MultiEdit"):
         p = ti.get("file_path")
@@ -104,46 +93,24 @@ try:
     if path is None:
         sys.exit(0)
 
-    r = resolve(path)
-    if not r.startswith(root + "/"):
+    rel = gate_lib.gate_normalize_path(root, path)
+    if rel is None:
         sys.exit(0)
-    rel = r[len(root):].lstrip("/")
     if not SCOPE_RE.match(rel):
         sys.exit(0)  # not this role's deliverable record — not this gate's business
 
+    abs_path = posixpath.join(root, rel) if rel else root
+
     current = None
-    if os.path.isfile(r):
+    if os.path.isfile(abs_path):
         try:
-            with open(r, encoding="utf-8-sig") as fh:
+            with open(abs_path, encoding="utf-8-sig") as fh:
                 current = fh.read(1 << 20)
         except OSError:
             deny("%s exists but cannot be read; failing closed on the ambiguity facet." % rel)
 
-    new_text = None
-    if tool == "Write":
-        c = ti.get("content")
-        if isinstance(c, str):
-            new_text = c
-    elif tool == "Edit":
-        o, n = ti.get("old_string"), ti.get("new_string")
-        if isinstance(o, str) and isinstance(n, str) and current is not None and o in current:
-            new_text = current.replace(o, n, 1)
-    elif tool == "MultiEdit":
-        edits = ti.get("edits")
-        text = current
-        if isinstance(edits, list) and text is not None:
-            ok = True
-            for e in edits:
-                if not isinstance(e, dict):
-                    ok = False; break
-                o, n = e.get("old_string"), e.get("new_string")
-                if not isinstance(o, str) or not isinstance(n, str) or o not in text:
-                    ok = False; break
-                text = text.replace(o, n, 1)
-            if ok:
-                new_text = text
-
-    if new_text is None:
+    new_text, ok = gate_lib.gate_reconstruct_write(tool, ti, current)
+    if not ok:
         deny(
             "this write targets %s but the gate cannot determine the resulting content "
             "from the tool input (tool=%r). Write the full document with Write, or use an "
@@ -173,7 +140,7 @@ except Exception as _fc_e:  # fail-closed-on-internal-error
 PY
 _fc_rc=$?  # fail-closed-on-internal-error
 if [ "$_fc_rc" -ne 0 ] && [ "$_fc_rc" -ne 2 ]; then
-  echo "requirements-engineering: refused — fail-closed: internal error (judge exited $_fc_rc)" >&2
+  echo "${role}: refused — fail-closed: internal error (judge exited $_fc_rc)" >&2
   exit 2
 fi
 exit "$_fc_rc"

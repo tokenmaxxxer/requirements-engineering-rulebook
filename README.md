@@ -39,6 +39,17 @@ claude plugin install requirements-engineering
   by reference from the core install (`core/hooks/tests/stub-check.sh`)
   against this rulebook's `hooks/` tree, confirming no gate copy has
   regrown locally and that `directive.sh` stays in stub form
+- `gate-lib.sh` / `gate-lib.py` — no local copy (core #72 canon, the
+  gate-house standard); each of the four gates below sources
+  `gate-lib.sh` and loads `gate-lib.py` by reference from the sibling
+  core install (`${CLAUDE_PLUGIN_ROOT_CORE:-<plugin>/../../core}`) for
+  the fail-closed trap, kill-switch, path-normalization, and
+  Write/Edit/MultiEdit reconstruction machinery, instead of
+  hand-rolling each — see core's `docs/handbooks/gate-house-standard.md`.
+  `compliance-check.sh` — also core canon, no local copy — run by
+  reference (`core/hooks/tests/compliance-check.sh <hooks-dir>`) flags
+  any gate that hand-rolls the kill-switch/reconstruction shapes instead
+  of calling through the library.
 - `docs/specs/approvers.md` — Approve-authority allowlist (see below)
 - `req-id-gate/`, `traceability-matrix-gate/`, `ambiguity-resolution-gate/`,
   `proposal-discipline-gate/` — four sibling plugins (issue #10), each

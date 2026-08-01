@@ -19,6 +19,13 @@ run() { # want name file content [extra_env=]
   rm -rf "$td"; report "$want" "$got" "$name"
 }
 
+run_raw_payload() { # want name payload_json [extra_env]
+  td="$(cd "$(mktemp -d)" && pwd -P)"; git init -q "$td"; mkdir -p "$td/$(dirname "$PROPOSAL_PATH")"
+  printf '%s' "$3" | env CLAUDE_PROJECT_DIR="$td" ${4:-} /bin/bash "$HOOKS/proposal-discipline-gate.sh" >/dev/null 2>&1
+  rc=$?; case "$rc" in 0) got=allow ;; 2) got=deny ;; *) got="exit-$rc" ;; esac
+  rm -rf "$td"; report "$1" "$got" "$2"
+}
+
 ALL_SEVEN='## Problem / Scope
 Text about the problem and scope.
 
@@ -81,6 +88,44 @@ run deny  missing-status        "$PROPOSAL_PATH"          "$MISSING_STATUS"    "
 run deny  missing-adopted-norm  "$PROPOSAL_PATH"          "$MISSING_ADOPTED_NORM" ""
 run allow foreign-path          "docs/issue-10/reports/requirements-engineering.md" "$MISSING_STATUS" ""
 run allow kill-switch-off       "$PROPOSAL_PATH"          "$MISSING_STATUS"    "PROPOSAL_DISCIPLINE_GATE_OFF=1"
+run deny  kill-switch-unrecognized "$PROPOSAL_PATH"       "$MISSING_STATUS"    "PROPOSAL_DISCIPLINE_GATE_OFF=xyz"
+
+run_absolute_path() {
+  td="$(cd "$(mktemp -d)" && pwd -P)"; git init -q "$td"; mkdir -p "$td/$(dirname "$PROPOSAL_PATH")"
+  python3 -c 'import json,sys; print(json.dumps({"tool_name":"Write","tool_input":{"file_path":sys.argv[1],"content":sys.argv[2]},"cwd":sys.argv[3]}))' \
+    "$td/$PROPOSAL_PATH" "$MISSING_STATUS" "$td" > "$td/.payload.json"
+  /bin/bash "$HOOKS/proposal-discipline-gate.sh" < "$td/.payload.json" >/dev/null 2>&1
+  rc=$?; case "$rc" in 0) got=allow ;; 2) got=deny ;; *) got="exit-$rc" ;; esac
+  rm -rf "$td"; report deny "$got" absolute-path
+}
+run_absolute_path
+
+run deny  dot-prefixed-path "./$PROPOSAL_PATH" "$MISSING_STATUS"
+
+run_edit_replace_all() {
+  td="$(cd "$(mktemp -d)" && pwd -P)"; git init -q "$td"; mkdir -p "$td/$(dirname "$PROPOSAL_PATH")"
+  printf 'FILLER FILLER\n' > "$td/$PROPOSAL_PATH"
+  payload='{"tool_name":"Edit","tool_input":{"file_path":"'"$PROPOSAL_PATH"'","old_string":"FILLER","new_string":"placeholder","replace_all":true},"cwd":"'"$td"'"}'
+  printf '%s' "$payload" | env CLAUDE_PROJECT_DIR="$td" /bin/bash "$HOOKS/proposal-discipline-gate.sh" >/dev/null 2>&1
+  rc=$?; case "$rc" in 0) got=allow ;; 2) got=deny ;; *) got="exit-$rc" ;; esac
+  rm -rf "$td"; report deny "$got" edit-replace_all-all-occurrences-checked
+}
+run_edit_replace_all
+
+run_multiedit_mixed() {
+  td="$(cd "$(mktemp -d)" && pwd -P)"; git init -q "$td"; mkdir -p "$td/$(dirname "$PROPOSAL_PATH")"
+  printf 'HEADING\nBODY\n' > "$td/$PROPOSAL_PATH"
+  py_content="$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$ALL_SEVEN")"
+  payload='{"tool_name":"MultiEdit","tool_input":{"file_path":"'"$PROPOSAL_PATH"'","edits":[{"old_string":"HEADING","new_string":"placeholder-a","replace_all":true},{"old_string":"placeholder-a\nBODY","new_string":'"$py_content"',"replace_all":false}]},"cwd":"'"$td"'"}'
+  printf '%s' "$payload" | env CLAUDE_PROJECT_DIR="$td" /bin/bash "$HOOKS/proposal-discipline-gate.sh" >/dev/null 2>&1
+  rc=$?; case "$rc" in 0) got=allow ;; 2) got=deny ;; *) got="exit-$rc" ;; esac
+  rm -rf "$td"; report allow "$got" multiedit-mixed-replace_all
+}
+run_multiedit_mixed
+
+run_raw_payload deny malformed-json-truncated '{"tool_name":"Write","tool_input":{'
+run_raw_payload deny malformed-json-non-object '["not","an","object"]'
+run_raw_payload deny malformed-json-empty ''
 
 printf '\n== %d passed, %d failed ==\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
