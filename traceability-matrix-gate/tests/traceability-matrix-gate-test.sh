@@ -83,6 +83,19 @@ run allow kill-switch-off       "$REC" "$NO_MATRIX" "TRACEABILITY_MATRIX_GATE_OF
 run deny  kill-switch-unrecognized "$REC" "$NO_MATRIX" "TRACEABILITY_MATRIX_GATE_OFF=xyz"
 run deny  d2-substring-regression "$REC" "$D2_SUBSTRING_TRAP"
 
+# D9 regression guard: a header cell literally "Resource" must not
+# satisfy the "Source" column requirement (whole-cell match, not substring).
+D9_RESOURCE_NOT_SOURCE='# Requirements Record
+## Requirements
+- REQ-1: something
+
+## Traceability Matrix
+| ID | Description | Resource | Downstream Link |
+| --- | --- | --- | --- |
+| REQ-1 | something | res | link |
+'
+run deny  d9-resource-not-source "$REC" "$D9_RESOURCE_NOT_SOURCE"
+
 # absolute-path: an absolute file_path reaching the same scope a relative fixture already covers
 run_absolute_path() {
   td="$(cd "$(mktemp -d)" && pwd -P)"; git init -q "$td"; mkdir -p "$td/docs/issue-7/reports"
@@ -122,6 +135,19 @@ run_multiedit_mixed
 run_raw_payload deny malformed-json-truncated '{"tool_name":"Write","tool_input":{'
 run_raw_payload deny malformed-json-non-object '["not","an","object"]'
 run_raw_payload deny malformed-json-empty ''
+
+# missing-core: CLAUDE_PLUGIN_ROOT_CORE pointed at a nonexistent path must
+# deny (exit 2), not silently allow (core issue-75 fix; the || guard on the
+# gate-lib.sh source line must trip here).
+run_missing_core() {
+  td="$(cd "$(mktemp -d)" && pwd -P)"; git init -q "$td"; mkdir -p "$td/docs/issue-7/reports"
+  payload="$(printf '{"tool_name":"Write","tool_input":{"file_path":"%s","content":%s},"cwd":"%s"}' \
+    "$REC" "$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$NO_MATRIX")" "$td")"
+  printf '%s' "$payload" | env CLAUDE_PROJECT_DIR="$td" CLAUDE_PLUGIN_ROOT_CORE="$td/no-such-core" /bin/bash "$HOOKS/traceability-matrix-gate.sh" >/dev/null 2>&1
+  rc=$?; case "$rc" in 0) got=allow ;; 2) got=deny ;; *) got="exit-$rc" ;; esac
+  rm -rf "$td"; report deny "$got" missing-core
+}
+run_missing_core
 
 printf '\n== %d passed, %d failed ==\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

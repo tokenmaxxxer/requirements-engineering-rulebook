@@ -122,5 +122,19 @@ Given a valid reset token
 When the user submits a new password
 Then the password is updated.'
 
+# missing-core: CLAUDE_PLUGIN_ROOT_CORE pointed at a nonexistent path must
+# deny (exit 2), not silently allow (core issue-75 fix; the || guard on the
+# gate-lib.sh source line must trip here).
+run_missing_core() {
+  td="$(cd "$(mktemp -d)" && pwd -P)"; git init -q "$td"; mkdir -p "$td/$(dirname "$REC")"
+  ( set +o pipefail
+    printf '{"tool_name":"Write","tool_input":{"file_path":"%s","content":"no ids here"},"cwd":"%s"}' \
+      "$REC" "$td" \
+      | env CLAUDE_PROJECT_DIR="$td" CLAUDE_PLUGIN_ROOT_CORE="$td/no-such-core" /bin/bash "$HOOKS/req-id-gate.sh" >/dev/null 2>&1 )
+  rc=$?; case "$rc" in 0) got=allow ;; 2) got=deny ;; *) got="exit-$rc" ;; esac
+  rm -rf "$td"; report deny "$got" missing-core
+}
+run_missing_core
+
 printf '\n== %d passed, %d failed ==\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

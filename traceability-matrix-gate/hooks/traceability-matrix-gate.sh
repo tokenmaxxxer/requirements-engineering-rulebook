@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-. "${CLAUDE_PLUGIN_ROOT_CORE:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../core" && pwd -P)}/hooks/lib/gate-lib.sh"
+. "${CLAUDE_PLUGIN_ROOT_CORE:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../core" && pwd -P)}/hooks/lib/gate-lib.sh" || { echo "traceability-matrix-gate.sh: cannot source gate-lib.sh" >&2; exit 2; }
 gate_trap_fail_closed
 # PreToolUse gate (Write|Edit|MultiEdit) — requirements-engineering
 # Facet B: traceability matrix.
@@ -191,11 +191,11 @@ try:
         ("ID", ("id",)),
         ("Description", ("description", "desc")),
         ("Source", ("source",)),
-        ("Downstream Link", ("downstream",)),
+        ("Downstream Link", ("downstream link", "downstream", "link")),
     )
 
-    def col_present(needles):
-        return any(any(n in cell for n in needles) for cell in header_cells)
+    def col_present(aliases):
+        return any(cell in aliases for cell in header_cells)
 
     missing_cols = [label for label, needles in REQUIRED_COLS if not col_present(needles)]
 
