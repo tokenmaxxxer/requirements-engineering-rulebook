@@ -121,7 +121,14 @@ this reason — recorded here, not silently dropped.
    for upstream-basis, so the rulebook doesn't invent a new reference
    grammar. Free text that is neither is denied with a message pointing
    at the spec's own `reference_resolution` rule (README cites it by
-   name).
+   name). This is a **shape check, not an existence check**: it catches
+   free-text/prose values that aren't reference-shaped at all, but a
+   syntactically well-formed path or hex string that doesn't actually
+   exist in the repo still passes — a bash PreToolUse gate doing a live
+   git/filesystem lookup on every matrix row is out of proportion for
+   this facet's existing rigor level (the other three gates are all
+   structural/shape checks, not existence checks) and is called out here
+   so phase 2 doesn't silently overclaim it.
 5. **`status` (per-requirement) field** — `traceability-matrix-gate.sh`
    accepts an optional fifth `Status` column; if present, every row must
    have a non-empty value (any string — spec marks the field itself
@@ -167,5 +174,9 @@ this reason — recorded here, not silently dropped.
   apply; this repo's suite is bash-based).
 - Manual smoke: a requirements record missing `ears_pattern:` or
   `verification_method:` is denied by `req-id-gate.sh`; one with all six
-  spec fields present passes; a traceability-matrix row with an
-  unresolvable `Source` cell is denied by `traceability-matrix-gate.sh`.
+  spec fields present passes; a traceability-matrix row with a
+  non-reference-shaped `Source` cell (prose, not a path/sha/citation) is
+  denied by `traceability-matrix-gate.sh` — this checks shape, not
+  existence (see item 4 above; a syntactically valid but nonexistent
+  reference is a known, stated limitation, not a bypass to fix in this
+  phase).
