@@ -35,7 +35,9 @@ Just some unrelated prose with no markers of that other kind nearby.'
 run allow req-id-with-verification "$REC" 'REQ-1: The system shall log in a user.
 Given valid credentials
 When the user submits the login form
-Then the user is authenticated.'
+Then the user is authenticated.
+ears_pattern: ubiquitous
+verification_method: Test'
 
 run allow foreign-path "docs/issue-10/reports/other.md" 'REQ-1: no id needed here since this path is out of scope.'
 
@@ -77,7 +79,7 @@ run_edit_replace_all() {
   td="$(cd "$(mktemp -d)" && pwd -P)"; git init -q "$td"; mkdir -p "$td/$(dirname "$REC")"
   printf 'REQ-1 needs a marker.\nREQ-1 needs a marker.\n' > "$td/$REC"
   ( set +o pipefail
-    printf '{"tool_name":"Edit","tool_input":{"file_path":"%s","old_string":"REQ-1 needs a marker.","new_string":"REQ-1: shall do X\\nGiven valid input\\nWhen action occurs\\nThen it verifies","replace_all":true},"cwd":"%s"}' \
+    printf '{"tool_name":"Edit","tool_input":{"file_path":"%s","old_string":"REQ-1 needs a marker.","new_string":"REQ-1: shall do X\\nGiven valid input\\nWhen action occurs\\nThen it verifies\\nears_pattern: ubiquitous\\nverification_method: Test","replace_all":true},"cwd":"%s"}' \
       "$REC" "$td" \
       | env CLAUDE_PROJECT_DIR="$td" /bin/bash "$HOOKS/req-id-gate.sh" >/dev/null 2>&1 )
   rc=$?; case "$rc" in 0) got=allow ;; 2) got=deny ;; *) got="exit-$rc" ;; esac
@@ -89,7 +91,7 @@ run_edit_replace_all
 run_multiedit_mixed() {
   td="$(cd "$(mktemp -d)" && pwd -P)"; git init -q "$td"; mkdir -p "$td/$(dirname "$REC")"
   printf 'PLACEHOLDER PLACEHOLDER\nTAIL\n' > "$td/$REC"
-  payload='{"tool_name":"MultiEdit","tool_input":{"file_path":"'"$REC"'","edits":[{"old_string":"PLACEHOLDER","new_string":"REQ-1: shall do X","replace_all":true},{"old_string":"TAIL","new_string":"Given a precondition\nWhen an action occurs\nThen it verifies","replace_all":false}]},"cwd":"'"$td"'"}'
+  payload='{"tool_name":"MultiEdit","tool_input":{"file_path":"'"$REC"'","edits":[{"old_string":"PLACEHOLDER","new_string":"REQ-1: shall do X","replace_all":true},{"old_string":"TAIL","new_string":"Given a precondition\nWhen an action occurs\nThen it verifies\nears_pattern: ubiquitous\nverification_method: Test","replace_all":false}]},"cwd":"'"$td"'"}'
   ( set +o pipefail
     printf '%s' "$payload" | env CLAUDE_PROJECT_DIR="$td" /bin/bash "$HOOKS/req-id-gate.sh" >/dev/null 2>&1 )
   rc=$?; case "$rc" in 0) got=allow ;; 2) got=deny ;; *) got="exit-$rc" ;; esac
@@ -120,7 +122,9 @@ Finally mentioning that when this happens nothing verifies it.'
 run allow d3-immediate-anchored-gwt "$REC" 'REQ-3: The system shall reset a password.
 Given a valid reset token
 When the user submits a new password
-Then the password is updated.'
+Then the password is updated.
+ears_pattern: ubiquitous
+verification_method: Test'
 
 # missing-core: CLAUDE_PLUGIN_ROOT_CORE pointed at a nonexistent path must
 # deny (exit 2), not silently allow (core issue-75 fix; the || guard on the
@@ -135,6 +139,73 @@ run_missing_core() {
   rm -rf "$td"; report deny "$got" missing-core
 }
 run_missing_core
+
+# --- ears_pattern / verification_method: spec-alignment layered checks ---
+# (docs/issue-19/proposals/spec-alignment.md items 2/3) — one pass case per
+# EARS pattern value, plus deny cases for a mismatched-keyword pattern, a
+# missing ears_pattern marker, a missing verification_method marker, and an
+# invalid verification_method value.
+
+run allow ears-ubiquitous "$REC" 'REQ-10: The system shall log all events.
+verification: manual check performed
+ears_pattern: ubiquitous
+verification_method: Test'
+
+run allow ears-event-driven "$REC" 'REQ-11: When a user logs in, the system shall record a timestamp.
+verification: manual check performed
+ears_pattern: event-driven
+verification_method: Test'
+
+run allow ears-state-driven "$REC" 'REQ-12: While the system is in maintenance mode, the system shall reject requests.
+verification: manual check performed
+ears_pattern: state-driven
+verification_method: Test'
+
+run allow ears-optional-feature "$REC" 'REQ-13: Where the premium feature is enabled, the system shall unlock extra storage.
+verification: manual check performed
+ears_pattern: optional-feature
+verification_method: Test'
+
+run allow ears-unwanted-behaviour "$REC" 'REQ-14: If an invalid token is presented, the system shall reject the request.
+verification: manual check performed
+ears_pattern: unwanted-behaviour
+verification_method: Test'
+
+run allow ears-complex "$REC" 'REQ-15: While in maintenance mode, when a request arrives, the system shall reject it.
+verification: manual check performed
+ears_pattern: complex
+verification_method: Test'
+
+# mismatched-keyword: marked event-driven but the statement has no WHEN
+# before SHALL.
+run deny  ears-mismatched-keyword "$REC" 'REQ-20: The system shall do nothing special.
+verification: manual check performed
+ears_pattern: event-driven
+verification_method: Test'
+
+# missing ears_pattern marker entirely (verification_method present).
+run deny  ears-pattern-missing "$REC" 'REQ-21: The system shall do something.
+verification: manual check performed
+verification_method: Test'
+
+# missing verification_method marker entirely (ears_pattern present).
+run deny  verification-method-missing "$REC" 'REQ-22: The system shall do something.
+verification: manual check performed
+ears_pattern: ubiquitous'
+
+# invalid verification_method value (not one of the four spec-enum values).
+run deny  verification-method-invalid "$REC" 'REQ-23: The system shall do something.
+verification: manual check performed
+ears_pattern: ubiquitous
+verification_method: Guessing'
+
+# word-boundary regression (warrant-hunt before-landing finding, issue-19):
+# a statement containing "marshall" must not satisfy "SHALL" via substring
+# match — the keyword has to appear as its own word.
+run deny  ears-substring-not-keyword "$REC" 'REQ-24: The marshall handles the request when needed.
+verification: manual check performed
+ears_pattern: ubiquitous
+verification_method: Test'
 
 printf '\n== %d passed, %d failed ==\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

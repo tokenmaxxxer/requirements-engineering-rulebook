@@ -187,6 +187,183 @@ try:
             "condition." % (NEARBY_LINES, ", ".join(unverified_ids))
         )
 
+    # --- ears_pattern / verification_method: layered spec-alignment checks ---
+    # Per docs/issue-19/proposals/spec-alignment.md items 2/3: each REQ-<id>
+    # block must ALSO carry a line-anchored `ears_pattern: <value>` marker
+    # (spec's six-value enum) whose statement text satisfies that pattern's
+    # EARS keyword-order grammar, AND a line-anchored
+    # `verification_method: <value>` marker (spec's four-value enum). Both
+    # are additional to the Given/When/Then/verification: check above —
+    # neither replaces it.
+    EARS_MARKER_RE = re.compile(r'^\s*ears_pattern:\s*(\S+)\s*$', re.I)
+    VERIFICATION_METHOD_MARKER_RE = re.compile(r'^\s*verification_method:\s*(\S+)\s*$')
+    STATEMENT_LINE_RE = re.compile(r'^\s*statement:\s*(.*)$', re.I)
+
+    EARS_VALUES = {
+        "ubiquitous", "event-driven", "state-driven",
+        "optional-feature", "unwanted-behaviour", "complex",
+    }
+    VERIFICATION_METHOD_VALUES = {"Inspection", "Analysis", "Demonstration", "Test"}
+
+    # Word-boundary matching only — a plain substring search would let a
+    # crafted statement like "The marshall handles it." satisfy "SHALL" via
+    # "marSHALL" (warrant-hunt before-landing finding, issue-19).
+    def _kw_find(up, kw, start=0):
+        m = re.compile(r'\b' + re.escape(kw) + r'\b').search(up, start)
+        return m.start() if m else -1
+
+    def _kw_order_ok(text, keywords):
+        # True if, case-insensitively, each keyword in `keywords` (in order,
+        # as a whole word) can be found with SHALL appearing after the last
+        # one, honoring left-to-right ordering (each subsequent search
+        # starts after the previous match).
+        up = text.upper()
+        pos = 0
+        for kw in keywords:
+            idx = _kw_find(up, kw, pos)
+            if idx == -1:
+                return False
+            pos = idx + len(kw)
+        return _kw_find(up, "SHALL", pos) != -1
+
+    def _ears_ok(pattern, text):
+        up = text.upper()
+        if pattern == "ubiquitous":
+            return _kw_find(up, "SHALL") != -1
+        if pattern == "event-driven":
+            return _kw_order_ok(text, ["WHEN"])
+        if pattern == "state-driven":
+            return _kw_order_ok(text, ["WHILE"])
+        if pattern == "optional-feature":
+            return _kw_order_ok(text, ["WHERE"])
+        if pattern == "unwanted-behaviour":
+            return _kw_order_ok(text, ["IF"])
+        if pattern == "complex":
+            shall_idx = _kw_find(up, "SHALL")
+            if shall_idx == -1:
+                return False
+            found = 0
+            for kw in ("WHEN", "WHILE", "IF", "WHERE"):
+                idx = _kw_find(up, kw)
+                if idx != -1 and idx < shall_idx:
+                    found += 1
+            return found >= 2
+        return False
+
+    def _find_block(i):
+        # contiguous block after the REQ-id line up to next blank line or
+        # next REQ-id, capped at NEARBY_LINES, same window style as the
+        # verification-condition check above.
+        block = [lines[i]]
+        for j in range(i + 1, min(i + 1 + NEARBY_LINES, len(lines))):
+            nxt = lines[j]
+            if nxt.strip() == "" or REQ_RE.search(nxt):
+                break
+            block.append(nxt)
+        return block
+
+    missing_ears = []
+    mismatched_ears = []
+    missing_vm = []
+    invalid_vm = []
+
+    # Find, for each first occurrence line of a REQ-id, its block; but per
+    # the "ever satisfied anywhere" style used above, check across ALL
+    # occurrences of a given id and consider it satisfied if any occurrence's
+    # block carries a valid marker.
+    ears_ok_ids = set()
+    ears_seen_marker_ids = set()
+    ears_bad_reason = {}
+    vm_ok_ids = set()
+    vm_seen_marker_ids = set()
+
+    for i, line in enumerate(lines):
+        ids_on_line = set(REQ_RE.findall(line))
+        if not ids_on_line:
+            continue
+        block = _find_block(i)
+
+        statement_text = None
+        for bline in block:
+            sm = STATEMENT_LINE_RE.match(bline)
+            if sm:
+                statement_text = sm.group(1)
+                break
+        if statement_text is None:
+            statement_text = line
+
+        ears_value = None
+        for bline in block:
+            em = EARS_MARKER_RE.match(bline)
+            if em:
+                ears_value = em.group(1)
+                break
+        if ears_value is not None:
+            ears_seen_marker_ids.update(ids_on_line)
+            norm_value = ears_value.lower()
+            if norm_value in EARS_VALUES and _ears_ok(norm_value, statement_text):
+                ears_ok_ids.update(ids_on_line)
+            else:
+                for rid in ids_on_line:
+                    ears_bad_reason[rid] = ears_value
+
+        vm_value = None
+        for bline in block:
+            vmm = VERIFICATION_METHOD_MARKER_RE.match(bline)
+            if vmm:
+                vm_value = vmm.group(1)
+                break
+        if vm_value is not None:
+            vm_seen_marker_ids.update(ids_on_line)
+            if vm_value in VERIFICATION_METHOD_VALUES:
+                vm_ok_ids.update(ids_on_line)
+
+    for rid in all_ids_in_order:
+        if rid not in ears_ok_ids:
+            if rid in ears_seen_marker_ids:
+                mismatched_ears.append("%s (ears_pattern=%s)" % (rid, ears_bad_reason.get(rid, "?")))
+            else:
+                missing_ears.append(rid)
+        if rid not in vm_ok_ids:
+            if rid in vm_seen_marker_ids:
+                invalid_vm.append(rid)
+            else:
+                missing_vm.append(rid)
+
+    if missing_ears:
+        deny(
+            "requirements-doc facet: REQ-<id> present without a nearby, line-anchored "
+            "`ears_pattern: <value>` marker (one of ubiquitous, event-driven, "
+            "state-driven, optional-feature, unwanted-behaviour, complex), within the "
+            "same contiguous block window used for the verification condition: %s. Per "
+            "docs/issue-19/proposals/spec-alignment.md item 2, every requirement must "
+            "declare its EARS pattern." % ", ".join(missing_ears)
+        )
+    if mismatched_ears:
+        deny(
+            "requirements-doc facet: REQ-<id> declares an `ears_pattern` whose value is "
+            "either not one of the six spec-enum values or whose statement text does not "
+            "satisfy that pattern's EARS keyword-order grammar (e.g. event-driven "
+            "requires WHEN before SHALL; state-driven requires WHILE before SHALL; "
+            "optional-feature requires WHERE before SHALL; unwanted-behaviour requires IF "
+            "before SHALL; complex requires at least two of WHEN/WHILE/IF/WHERE before "
+            "SHALL; ubiquitous requires SHALL with no such trigger required): %s." % ", ".join(mismatched_ears)
+        )
+    if missing_vm:
+        deny(
+            "requirements-doc facet: REQ-<id> present without a nearby, line-anchored "
+            "`verification_method: <value>` marker (one of Inspection, Analysis, "
+            "Demonstration, Test), within the same contiguous block window used for the "
+            "verification condition: %s. Per docs/issue-19/proposals/spec-alignment.md "
+            "item 3, every requirement must declare its verification method." % ", ".join(missing_vm)
+        )
+    if invalid_vm:
+        deny(
+            "requirements-doc facet: REQ-<id> declares a `verification_method` value that "
+            "is not one of the spec's four enum values (Inspection, Analysis, "
+            "Demonstration, Test — case-sensitive exact match): %s." % ", ".join(invalid_vm)
+        )
+
     sys.exit(0)
 except Exception as _fc_e:  # fail-closed-on-internal-error
     _fc_sys.stderr.write("req-id-gate.sh: fail-closed: internal error: %r\n" % (_fc_e,))

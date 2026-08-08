@@ -104,18 +104,77 @@ canon's `record-fields-gate.sh`):
 1. **Structured requirements doc** — an ISO/IEC/IEEE 29148-derived
    skeleton scoped to what this role needs: Introduction (purpose/scope),
    Requirements grouped functional vs. non-functional, each with a unique
-   ID, a testable statement, and an explicit Given/When/Then-or-equivalent
-   verification condition. Full 29148 sections (interfaces/compliance/
-   appendixes) are included only when the source material actually has
-   content for them — no padding.
+   ID, an explicit `statement:`-labeled testable statement, and an
+   explicit Given/When/Then-or-equivalent verification condition. Full
+   29148 sections (interfaces/compliance/appendixes) are included only
+   when the source material actually has content for them — no padding.
 2. **Traceability matrix** — a table with at minimum: Requirement ID,
    Requirement Description, Source, Downstream Link (or explicit "not yet
-   linked"). No row without a unique, non-empty ID and Source.
+   linked"), and an optional Status column. No row without a unique,
+   non-empty ID and Source.
 3. **Ambiguity list, resolved** — every ambiguity found during elicitation
    logged as: ambiguous statement, candidate readings, resolution chosen
    (or "escalated — unresolved" — never silently folded into an implicit
    assumption), and who/what resolved it. Zero ambiguities found must be
    stated explicitly, not omitted.
+
+### Spec-alignment (issue #19) — required deliverable fields
+
+Layered onto the norms above per `docs/issue-19/proposals/spec-alignment.md`,
+mapping the realized marketplace spec
+(`roles/specs/requirements-engineering.spec.json`) onto this rulebook's
+existing methodology without deleting any of it:
+
+- `statement` — the `statement:`-labeled testable statement text required
+  by norm 1 above.
+- `ears_pattern` — each `REQ-<id>` also carries a line-anchored
+  `ears_pattern: <value>` marker, one of `ubiquitous`, `event-driven`,
+  `state-driven`, `optional-feature`, `unwanted-behaviour`, `complex`,
+  matching the EARS canonical grammar of its statement text (e.g.
+  `event-driven` requires `WHEN` before `SHALL`); enforced by
+  `req-id-gate`.
+- `verification_method` — each `REQ-<id>` also carries a line-anchored
+  `verification_method: <value>` marker, one of `Inspection`, `Analysis`,
+  `Demonstration`, `Test`, layered alongside (not replacing) the existing
+  Given/When/Then/`verification:` condition; enforced by `req-id-gate`.
+- `source` / `downstream_link` — the traceability matrix's Source and
+  Downstream Link cells, when not the "not yet linked" placeholder, must
+  be reference-shaped (a repo-relative path, a 7-40 char hex commit sha,
+  or a bracketed/markdown-link citation) — a shape check, not an
+  existence check; enforced by `traceability-matrix-gate`.
+- `status` — an optional fifth traceability-matrix column; when present,
+  every row must have a non-empty Status value; enforced by
+  `traceability-matrix-gate`.
+
+### Spec-alignment (issue #19) — loop_state vocabulary
+
+This role's record `loop_state` uses the spec's vocabulary verbatim:
+
+- progress: `drafting`, `resolving-ambiguity`
+- terminal: `landed`
+- refusal: `hypothesis-not-final`
+- error: `source-unresolvable`
+
+No stale contract-generic state and no extra state is intended for this
+role's records. **Not mechanically enforced via
+`docs/specs/record-fields-terminal-states.json`** — that override file
+is keyed by contract §2's fixed canon kinds (`product-record`,
+`coding-record`, etc.), each already claimed by an existing role through
+core's `ROLE_TO_KIND` map, and core's `record-fields-gate.sh` applies a
+matching key globally, not scoped to the declaring role. `requirements-
+engineering` is not a canon role in that map, so this role has no key of
+its own to add without either being refused outright (an unrecognized
+key) or silently overriding another role's terminal-state behavior
+(e.g. keying `product-record` would also change the actual `product`
+role's loop_state semantics repo-wide). This vocabulary is therefore
+doctrine only for now — stated here and in `directive.sh`'s `PRODUCES`
+line so a session using this role adopts it by convention, not by gate.
+Mechanical enforcement would need core to add `requirements-engineering`
+to `ROLE_TO_KIND` first — a core-repo change, out of this rulebook's
+write scope. The spec's `recomputation` rule (status-before-
+verification_method ordering) is separately left unenforced — out of
+scope per `docs/issue-19/proposals/spec-alignment.md`'s Rationale
+(upstream marks it `"TBD"`).
 
 ### Mechanical enforcement — plugin set (issue #10)
 
@@ -127,8 +186,8 @@ four are additive on top of (never instead of) canon's role-agnostic
 
 | Plugin | Fires on | Checks |
 |---|---|---|
-| `req-id-gate` | `docs/issue-N/reports/requirements-engineering.md` | every `REQ-<id>` has a nearby verification condition (Given/When/Then or `verification:`); ships `agents/requirements-scout.md` to front-load elicitation → ID → verification-condition ordering |
-| `traceability-matrix-gate` | same | a "traceability matrix" section with ID/Description/Source/Downstream Link columns, and a row for every `REQ-<id>` in the record |
+| `req-id-gate` | `docs/issue-N/reports/requirements-engineering.md` | every `REQ-<id>` has a nearby verification condition (Given/When/Then or `verification:`), a nearby `ears_pattern:` marker matching its statement's EARS grammar, and a nearby `verification_method:` marker; ships `agents/requirements-scout.md` to front-load elicitation → ID → verification-condition ordering |
+| `traceability-matrix-gate` | same | a "traceability matrix" section with ID/Description/Source/Downstream Link columns, a row for every `REQ-<id>` in the record, reference-shaped Source/Downstream Link cells, and (when present) a non-empty optional Status column |
 | `ambiguity-resolution-gate` | same | an "ambiguity" section that is either explicitly empty ("none found") or has every entry resolved/escalated |
 | `proposal-discipline-gate` | `docs/issue-N/proposals/*requirements-engineering*.md` | the seven phase-1 proposal sections above are present |
 

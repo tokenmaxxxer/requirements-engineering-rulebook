@@ -57,8 +57,8 @@ COMPLETE_MATRIX='# Requirements Record
 ## Traceability Matrix
 | ID | Description | Source | Downstream Link |
 | --- | --- | --- | --- |
-| REQ-1 | something | src | link |
-| REQ-2 | something else | src | link |
+| REQ-1 | something | src/file.py | abc1234 |
+| REQ-2 | something else | src/other.py | abc1234def |
 '
 
 # D2 regression guard: the section contains the bare word "valid" (an
@@ -148,6 +148,89 @@ run_missing_core() {
   rm -rf "$td"; report deny "$got" missing-core
 }
 run_missing_core
+
+# --- item 4/5 (spec-alignment.md): source/downstream_link shape + optional status ---
+
+SHAPE_VALID='# Requirements Record
+## Requirements
+- REQ-1: something
+
+## Traceability Matrix
+| ID | Description | Source | Downstream Link |
+| --- | --- | --- | --- |
+| REQ-1 | something | src/file.py | abc1234 |
+'
+run allow shape-valid-path-and-sha "$REC" "$SHAPE_VALID"
+
+SHAPE_FREE_PROSE_SOURCE='# Requirements Record
+## Requirements
+- REQ-1: something
+
+## Traceability Matrix
+| ID | Description | Source | Downstream Link |
+| --- | --- | --- | --- |
+| REQ-1 | something | some notes about this | abc1234 |
+'
+run deny shape-free-prose-source "$REC" "$SHAPE_FREE_PROSE_SOURCE"
+
+SHAPE_FREE_PROSE_LINK='# Requirements Record
+## Requirements
+- REQ-1: something
+
+## Traceability Matrix
+| ID | Description | Source | Downstream Link |
+| --- | --- | --- | --- |
+| REQ-1 | something | src/file.py | some notes about this |
+'
+run deny shape-free-prose-downstream-link "$REC" "$SHAPE_FREE_PROSE_LINK"
+
+SHAPE_NOT_YET_LINKED='# Requirements Record
+## Requirements
+- REQ-1: something
+
+## Traceability Matrix
+| ID | Description | Source | Downstream Link |
+| --- | --- | --- | --- |
+| REQ-1 | something | not yet linked | Not Yet Linked |
+'
+run allow shape-not-yet-linked-placeholder "$REC" "$SHAPE_NOT_YET_LINKED"
+
+STATUS_COLUMN_FILLED='# Requirements Record
+## Requirements
+- REQ-1: something
+- REQ-2: something else
+
+## Traceability Matrix
+| ID | Description | Source | Downstream Link | Status |
+| --- | --- | --- | --- | --- |
+| REQ-1 | something | src/file.py | abc1234 | landed |
+| REQ-2 | something else | not yet linked | not yet linked | drafting |
+'
+run allow status-column-all-filled "$REC" "$STATUS_COLUMN_FILLED"
+
+STATUS_COLUMN_ONE_EMPTY='# Requirements Record
+## Requirements
+- REQ-1: something
+- REQ-2: something else
+
+## Traceability Matrix
+| ID | Description | Source | Downstream Link | Status |
+| --- | --- | --- | --- | --- |
+| REQ-1 | something | src/file.py | abc1234 | landed |
+| REQ-2 | something else | not yet linked | not yet linked | |
+'
+run deny status-column-one-empty "$REC" "$STATUS_COLUMN_ONE_EMPTY"
+
+NO_STATUS_COLUMN='# Requirements Record
+## Requirements
+- REQ-1: something
+
+## Traceability Matrix
+| ID | Description | Source | Downstream Link |
+| --- | --- | --- | --- |
+| REQ-1 | something | src/file.py | abc1234 |
+'
+run allow no-status-column-unaffected "$REC" "$NO_STATUS_COLUMN"
 
 printf '\n== %d passed, %d failed ==\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

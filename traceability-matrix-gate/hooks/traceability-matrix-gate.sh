@@ -217,6 +217,81 @@ try:
             "in the traceability matrix." % (", ".join(sorted(missing)), CITE)
         )
 
+    # --- source/downstream_link shape check + optional status column ---
+    # Per docs/issue-19/proposals/spec-alignment.md items 4-5, layered on
+    # top of the structural checks above (D2/D9-style: shape, not
+    # existence — see item 4's own stated limitation).
+    SPEC_ALIGNMENT_CITE = "docs/issue-19/proposals/spec-alignment.md"
+
+    def col_index(aliases):
+        for i, cell in enumerate(header_cells):
+            if cell in aliases:
+                return i
+        return None
+
+    source_idx = col_index(("source",))
+    link_idx = col_index(("downstream link", "downstream", "link"))
+    status_idx = col_index(("status",))
+
+    def split_row(line):
+        return [c.strip() for c in line.strip().strip('|').split('|')]
+
+    data_rows = []
+    for i in range(header_idx + 2, len(sec_lines)):
+        line = sec_lines[i]
+        if not HEADER_LINE_RE.match(line):
+            break
+        data_rows.append(split_row(line))
+
+    NOT_YET_LINKED_RE = re.compile(r'^\s*not yet linked\s*$', re.I)
+    URL_RE = re.compile(r'^[a-z][a-z0-9+.\-]*://', re.I)
+    SHA_RE = re.compile(r'^[0-9a-f]{7,40}$', re.I)
+    CITATION_RE = re.compile(r'\[.+\]\(.+\)')
+    BRACKET_RE = re.compile(r'^\[.+\]$')
+
+    def looks_reference_shaped(value):
+        v = value.strip()
+        if not v:
+            return True  # empty cells are not this check's job (see D9/non-empty-cell notes)
+        if NOT_YET_LINKED_RE.match(v):
+            return True
+        if URL_RE.match(v):
+            return False  # URLs explicitly excluded per item 4's reference-shape list
+        if CITATION_RE.search(v) or BRACKET_RE.match(v):
+            return True
+        if SHA_RE.match(v):
+            return True
+        if (('/' in v) or ('.' in v)) and (' ' not in v):
+            return True
+        return False
+
+    def cell_at(row, idx):
+        return row[idx] if idx is not None and idx < len(row) else ""
+
+    for row in data_rows:
+        req_id = cell_at(row, header_cells.index("id")) if "id" in header_cells else "?"
+        for label, idx in (("Source", source_idx), ("Downstream Link", link_idx)):
+            value = cell_at(row, idx)
+            if not value.strip():
+                continue  # empty-cell enforcement is out of scope here (no existing check to extend)
+            if not looks_reference_shaped(value):
+                deny(
+                    "traceability-matrix row for %s has a %s cell (%r) that is free "
+                    "prose, not a resolvable reference shape (repo-relative path, "
+                    "7-40 char hex commit sha, or bracketed/linked citation) and is not "
+                    "the 'not yet linked' placeholder. This is a shape check per the "
+                    "spec's reference_resolution rule, not an existence check — see %s "
+                    "item 4." % (req_id, label, value, SPEC_ALIGNMENT_CITE)
+                )
+        if status_idx is not None:
+            status_value = cell_at(row, status_idx)
+            if not status_value.strip():
+                deny(
+                    "traceability-matrix row for %s has an empty Status cell. Per %s "
+                    "item 5, once the optional Status column is present in the table "
+                    "header, every row must carry a non-empty Status value." % (req_id, SPEC_ALIGNMENT_CITE)
+                )
+
     sys.exit(0)
 except Exception as _fc_e:  # fail-closed-on-internal-error
     _fc_sys.stderr.write("traceability-matrix-gate.sh: fail-closed: internal error: %r\n" % (_fc_e,))
