@@ -16,6 +16,26 @@ hook on `Write|Edit|MultiEdit` built on core's `gate-lib.sh`/`gate-lib.py`
 (core issue #72, referenced from the sibling core install, never vendored)
 (see `hooks/traceability-matrix-gate.sh` and `hooks/hooks.json`).
 
+Beyond the column/row structural checks above, non-empty `Source` and
+`Downstream Link` cells are checked for reference shape: a value must be
+either the literal `not yet linked` placeholder (case-insensitive), a
+repo-relative path (contains a `/` or a `.`, no spaces, not a URL), a
+7-40 character hex commit SHA, or a bracketed/linked citation (markdown
+`[text](target)` or a bare `[...]`). Free-text prose that matches none of
+these shapes is denied, citing the spec's `reference_resolution` rule
+(per `docs/issue-19/proposals/spec-alignment.md` item 4). This is a
+**shape check, not an existence check** — a syntactically valid path or
+SHA that doesn't actually exist in the repo still passes; a live
+filesystem/git lookup on every matrix row is out of proportion for this
+facet's existing rigor level (D2/D9 above are shape checks too).
+
+The table may also carry an optional fifth **Status** column
+(per-requirement status, aliased case-insensitively as `Status`). It is
+never required — matrices without it are unaffected. But once a `Status`
+header cell is present, every data row must have a non-empty Status
+value (any string; the spec marks this field `type: string`, not an
+enum) (per `docs/issue-19/proposals/spec-alignment.md` item 5).
+
 Any write outside that path is ignored (exit 0).
 
 The gate fails closed: any internal error (malformed JSON payload,
