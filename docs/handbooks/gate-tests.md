@@ -28,3 +28,25 @@ proposal-discipline-gate):
 
 A new plugin's test file must be added to the `SUITES` array in
 `tests/run-gate-tests.sh` in the same commit that adds the plugin.
+
+## Test-env resolution (issue #22, on-the-record #551)
+
+Each of the four suite scripts vendors and invokes
+`gates/test_env_resolve.py` (verbatim from on-the-record, per
+`docs/specs/test-env-resolution.md`) before any hook subprocess runs:
+`python3 -m gates.test_env_resolve "$ROOT/../../core" "$ROOT/../../../core"`.
+If the resolver exits `75` (core unreachable — no `CLAUDE_PLUGIN_ROOT_CORE`
+and no sibling `core` checkout at the candidate paths), the suite script
+itself exits `75` immediately with the resolver's SKIP message already on
+stderr, running zero test cases. If it exits `0`, the resolved path is
+exported as `CLAUDE_PLUGIN_ROOT_CORE` for every hook invocation in that
+script. Each suite's `missing-core` case now asserts the SKIP contract
+directly against the resolver (bogus candidates, `CLAUDE_PLUGIN_ROOT_CORE`
+unset) rather than against the hook subprocess.
+
+`tests/run-gate-tests.sh` tallies a sub-suite's exit `75` as a distinct
+`skip` count, separate from `fail`, and reports it in its summary line.
+Outside the spawn env (no core reachable), a full run of
+`bash tests/run-gate-tests.sh` therefore exits `0` with all four suites
+reported as skipped, rather than misreporting `deny`-expected cases as
+passing.
