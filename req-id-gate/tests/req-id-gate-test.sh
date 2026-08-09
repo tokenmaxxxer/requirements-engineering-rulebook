@@ -3,6 +3,19 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 HOOKS="$HERE/../hooks"
+ROOT="$(cd "$HERE/../.." && pwd -P)"
+
+# on-the-record test-env resolution convention (docs/specs/test-env-resolution.md, #551)
+_tenv_out="$(cd "$ROOT" && python3 -m gates.test_env_resolve "$ROOT/../../core" "$ROOT/../../../core")"
+_tenv_rc=$?
+if [ "$_tenv_rc" -eq 75 ]; then
+  exit 75
+elif [ "$_tenv_rc" -ne 0 ]; then
+  echo "$(basename "${BASH_SOURCE[0]}"): test-env resolution failed unexpectedly (rc=$_tenv_rc)" >&2
+  exit 2
+fi
+export CLAUDE_PLUGIN_ROOT_CORE="$_tenv_out"
+
 pass=0; fail=0
 report() { if [ "$2" = "$1" ]; then pass=$((pass+1)); printf 'ok     %-28s %s\n' "$3" "$2"; else fail=$((fail+1)); printf 'FAIL   %-28s want=%s got=%s\n' "$3" "$1" "$2"; fi; }
 
@@ -126,17 +139,15 @@ Then the password is updated.
 ears_pattern: ubiquitous
 verification_method: Test'
 
-# missing-core: CLAUDE_PLUGIN_ROOT_CORE pointed at a nonexistent path must
-# deny (exit 2), not silently allow (core issue-75 fix; the || guard on the
-# gate-lib.sh source line must trip here).
+# missing-core: with no CLAUDE_PLUGIN_ROOT_CORE and no reachable sibling
+# checkout, the resolver must SKIP (exit 75), per the test-env resolution
+# convention (docs/specs/test-env-resolution.md, #551) — asserted directly
+# against the resolver, not the hook subprocess.
 run_missing_core() {
-  td="$(cd "$(mktemp -d)" && pwd -P)"; git init -q "$td"; mkdir -p "$td/$(dirname "$REC")"
-  ( set +o pipefail
-    printf '{"tool_name":"Write","tool_input":{"file_path":"%s","content":"no ids here"},"cwd":"%s"}' \
-      "$REC" "$td" \
-      | env CLAUDE_PROJECT_DIR="$td" CLAUDE_PLUGIN_ROOT_CORE="$td/no-such-core" /bin/bash "$HOOKS/req-id-gate.sh" >/dev/null 2>&1 )
-  rc=$?; case "$rc" in 0) got=allow ;; 2) got=deny ;; *) got="exit-$rc" ;; esac
-  rm -rf "$td"; report deny "$got" missing-core
+  out_rc=0
+  ( cd "$ROOT" && env -u CLAUDE_PLUGIN_ROOT_CORE python3 -m gates.test_env_resolve "/no/such/core-a" "/no/such/core-b" ) >/dev/null 2>&1 || out_rc=$?
+  case "$out_rc" in 75) got=skip ;; *) got="exit-$out_rc" ;; esac
+  report skip "$got" missing-core
 }
 run_missing_core
 
