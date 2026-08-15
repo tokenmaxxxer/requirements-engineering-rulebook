@@ -1,7 +1,7 @@
 ---
 name: requirements-engineering-playbook
 subject: issue-1174
-rule_count_floor: 21
+rule_count_floor: 23
 axes: 7
 tier: rich
 ---
@@ -72,6 +72,30 @@ forces.
     applies; never leave verification_method unset. Source:
     ISO/IEC/IEEE 29148 (all requirements "verified through inspection,
     test, demonstration, or analysis").
+11a. Condition: a requirement's verification_method is Test or
+    Demonstration and the requirement's own acceptance condition can be
+    expressed as a runnable check (a command, script, or query).
+    Choice: pair the verification condition with that literal runnable
+    check, not a prose description of what someone would run — a
+    verification_method that stays prose-only when a concrete command
+    exists is under-specified. Source: distilled from a widely-adopted
+    Claude Code spec-authoring plugin's convention of attaching "a
+    runnable verify command on every build step" to each acceptance
+    criterion (evidence trail: this role's tool-landscape fold-in,
+    docs/issue-1199/reports/requirements-engineering.md).
+11b. Condition: a batch of requirements has just been drafted or
+    revised and is about to hand off to a downstream role (plan,
+    design, or implementation). Choice: run one explicit
+    cross-requirement consistency/coverage pass over the whole batch
+    before handoff — check for gaps and contradictions across the set,
+    not only within each requirement individually — and log the pass
+    itself in the traceability matrix's status field; do not treat
+    per-requirement drafting quality as a substitute for a whole-batch
+    check. Source: distilled from a widely-adopted Claude Code
+    spec-driven-development plugin's dedicated cross-artifact
+    consistency/coverage-analysis step run after task generation but
+    before implementation (evidence trail: this role's tool-landscape
+    fold-in, docs/issue-1199/reports/requirements-engineering.md).
 
 ## Axis 3 — Ambiguity detection & resolution
 
